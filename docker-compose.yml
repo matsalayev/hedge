@@ -1,0 +1,77 @@
+# Hedging Grid Robot - Docker Compose Configuration
+
+version: '3.8'
+
+services:
+  # ─────────────────────────────────────────────────────────────────────────
+  # Production Service
+  # ─────────────────────────────────────────────────────────────────────────
+  hedging-robot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: hedging-grid-robot
+    restart: unless-stopped
+    ports:
+      - "8082:8082"
+    environment:
+      - SERVER_PORT=8082
+      - BOT_ID=hedging-grid-bot
+      - BOT_NAME=Hedging Grid Robot
+      - BOT_VERSION=1.0.0
+      - BOT_SECRET=${BOT_SECRET:-}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - DEBUG=${DEBUG:-false}
+    env_file:
+      - .env
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8082/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # Uncomment to limit resources
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: '1'
+    #       memory: 512M
+    #     reservations:
+    #       cpus: '0.25'
+    #       memory: 128M
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Development Service (use with --profile dev)
+  # ─────────────────────────────────────────────────────────────────────────
+  hedging-robot-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: hedging-grid-robot-dev
+    profiles:
+      - dev
+    ports:
+      - "8083:8082"
+    environment:
+      - SERVER_PORT=8082
+      - BOT_ID=hedging-grid-bot-dev
+      - BOT_NAME=Hedging Grid Robot (Dev)
+      - BOT_VERSION=1.0.0-dev
+      - LOG_LEVEL=DEBUG
+      - DEBUG=true
+    env_file:
+      - .env
+    volumes:
+      - ./hedging_robot:/app/hedging_robot:ro
+      - ./run.py:/app/run.py:ro
+      - ./run_server.py:/app/run_server.py:ro
+    command: ["python", "run_server.py", "--debug", "--reload"]
+
+networks:
+  default:
+    name: hedging-robot-network

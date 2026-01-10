@@ -1,0 +1,18 @@
+# Hedging Grid Robot - Dependencies
+
+# Async HTTP client
+aiohttp>=3.9.0
+
+# Environment variables
+python-dotenv>=1.0.0
+
+# FastAPI server (HEMA integration)
+fastapi>=0.109.0
+uvicorn>=0.27.0
+pydantic>=2.5.0
+
+# System monitoring
+psutil>=5.9.0
+
+# Typing extensions
+typing-extensions>=4.9.0
