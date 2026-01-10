@@ -150,55 +150,280 @@ async def verify_request(request: Request):
 #                               HEALTH & INFO ENDPOINTS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-@app.get("/health")
-async def health_check():
-    """Health check endpoint"""
+async def _health_response():
+    """Health check response data"""
     uptime = int((datetime.utcnow() - START_TIME).total_seconds())
     manager = get_session_manager()
 
     return {
         "status": "healthy",
+        "version": BOT_VERSION,
         "uptime": uptime,
+        "timestamp": datetime.utcnow().isoformat() + "Z",
         "activeSessions": manager.active_sessions,
-        "totalSessions": manager.total_sessions,
-        "timestamp": datetime.utcnow().isoformat() + "Z"
+        "totalSessions": manager.total_sessions
     }
 
 
-@app.get("/info")
-async def bot_info():
-    """Bot information endpoint"""
+async def _info_response():
+    """Bot info response data - HEMA format"""
     return {
         "id": BOT_ID,
         "name": BOT_NAME,
         "version": BOT_VERSION,
-        "description": "Grid Hedging Trading Robot with SMA/SAR and CCI entry signals",
-        "strategy": "hedging_grid",
+        "strategy": "GRID_HEDGING",
+        "description": "Grid Hedging strategiyasi asosida ishlaydigan trading robot. Martingale lot sizing va SMA/SAR/CCI entry signallari bilan.",
+        "author": "HEMA",
+        "exchange": "bitget",
+        "supportedPairs": [
+            "BTCUSDT", "ETHUSDT", "BNBUSDT", "XRPUSDT", "ADAUSDT",
+            "DOGEUSDT", "SOLUSDT", "DOTUSDT", "MATICUSDT", "LTCUSDT"
+        ],
         "supportedExchanges": ["bitget"],
-        "supportedPairs": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT"],
-        "capabilities": {
-            "demoMode": True,
-            "realMode": True,
-            "multiUser": True,
-            "webhooks": True
+        "minTradeAmount": 10,
+        "maxTradeAmount": 10000,
+        "defaultSettings": {
+            "tradingPair": "BTCUSDT",
+            "leverage": 10,
+            "tradeAmount": 100,
+            "takeProfit": 3.0,
+            "stopLoss": 0,
+            "maxConcurrentTrades": 10
         },
-        "settings": {
-            "grid": {
-                "multiplier": {"type": "float", "default": 1.5, "min": 0, "max": 5},
-                "spacePercent": {"type": "float", "default": 0.5, "min": 0.1, "max": 10},
-                "spaceOrders": {"type": "int", "default": 5, "min": 1, "max": 50}
+        "customSettings": {
+            # Grid Settings
+            "multiplier": {
+                "name": "Martingale Multiplier",
+                "type": "float",
+                "default": 1.5,
+                "min": 0,
+                "max": 5.0,
+                "description": "Lot ko'paytirish koeffitsiyenti (0 = fixed lot)",
+                "group": "Grid Settings"
             },
-            "entry": {
-                "useSmaSar": {"type": "bool", "default": True},
-                "smaPeriod": {"type": "int", "default": 7, "min": 3, "max": 100},
-                "cciPeriod": {"type": "int", "default": 0, "min": 0, "max": 100}
+            "spacePercent": {
+                "name": "Grid Space %",
+                "type": "float",
+                "default": 0.5,
+                "min": 0.1,
+                "max": 10.0,
+                "description": "Grid Level 1 masofa (foizda)",
+                "group": "Grid Settings"
             },
-            "profit": {
-                "singleOrderProfit": {"type": "float", "default": 3.0, "min": 0.1, "max": 1000},
-                "pairGlobalProfit": {"type": "float", "default": 1.0, "min": 0, "max": 1000}
+            "spaceOrders": {
+                "name": "Grid Level 1 Orders",
+                "type": "int",
+                "default": 5,
+                "min": 1,
+                "max": 50,
+                "description": "Grid Level 1 dagi orderlar soni",
+                "group": "Grid Settings"
+            },
+            "space1Percent": {
+                "name": "Grid Level 2 %",
+                "type": "float",
+                "default": 1.5,
+                "min": 0.5,
+                "max": 20.0,
+                "description": "Grid Level 2 masofa (foizda)",
+                "group": "Grid Settings"
+            },
+            "space2Percent": {
+                "name": "Grid Level 3 %",
+                "type": "float",
+                "default": 3.0,
+                "min": 1.0,
+                "max": 30.0,
+                "description": "Grid Level 3 masofa (foizda)",
+                "group": "Grid Settings"
+            },
+            "space3Percent": {
+                "name": "Grid Level 4 %",
+                "type": "float",
+                "default": 5.0,
+                "min": 2.0,
+                "max": 50.0,
+                "description": "Grid Level 4 masofa (foizda)",
+                "group": "Grid Settings"
+            },
+            # Entry Settings
+            "useSmaSar": {
+                "name": "Use SMA/SAR Entry",
+                "type": "bool",
+                "default": True,
+                "description": "SMA/Parabolic SAR signallarini ishlatish",
+                "group": "Entry Settings"
+            },
+            "smaPeriod": {
+                "name": "SMA Period",
+                "type": "int",
+                "default": 7,
+                "min": 3,
+                "max": 100,
+                "description": "SMA indikator davri",
+                "group": "Entry Settings"
+            },
+            "sarAf": {
+                "name": "SAR Acceleration",
+                "type": "float",
+                "default": 0.1,
+                "min": 0.01,
+                "max": 0.5,
+                "description": "Parabolic SAR acceleration factor",
+                "group": "Entry Settings"
+            },
+            "sarMax": {
+                "name": "SAR Maximum",
+                "type": "float",
+                "default": 0.8,
+                "min": 0.1,
+                "max": 1.0,
+                "description": "Parabolic SAR maksimal AF",
+                "group": "Entry Settings"
+            },
+            "cciPeriod": {
+                "name": "CCI Period",
+                "type": "int",
+                "default": 0,
+                "min": 0,
+                "max": 100,
+                "description": "CCI indikator davri (0 = o'chirilgan)",
+                "group": "Entry Settings"
+            },
+            "cciMax": {
+                "name": "CCI Max Level",
+                "type": "float",
+                "default": 100,
+                "min": 50,
+                "max": 200,
+                "description": "CCI yuqori signal darajasi",
+                "group": "Entry Settings"
+            },
+            "cciMin": {
+                "name": "CCI Min Level",
+                "type": "float",
+                "default": -100,
+                "min": -200,
+                "max": -50,
+                "description": "CCI past signal darajasi",
+                "group": "Entry Settings"
+            },
+            "timeframe": {
+                "name": "Timeframe",
+                "type": "select",
+                "default": "1H",
+                "options": ["1m", "5m", "15m", "30m", "1H", "4H", "1D"],
+                "description": "Signal timeframe",
+                "group": "Entry Settings"
+            },
+            "reverseOrder": {
+                "name": "Reverse Signals",
+                "type": "bool",
+                "default": False,
+                "description": "Signal yo'nalishini teskari qilish",
+                "group": "Entry Settings"
+            },
+            # Profit Settings
+            "singleOrderProfit": {
+                "name": "Single Order Profit",
+                "type": "float",
+                "default": 3.0,
+                "min": 0.1,
+                "max": 1000,
+                "description": "Bitta order uchun profit target (USDT)",
+                "group": "Profit Settings"
+            },
+            "pairGlobalProfit": {
+                "name": "Pair Global Profit",
+                "type": "float",
+                "default": 1.0,
+                "min": 0,
+                "max": 1000,
+                "description": "Buy+Sell juftlik profit target (USDT)",
+                "group": "Profit Settings"
+            },
+            "globalProfit": {
+                "name": "Daily Profit Target",
+                "type": "float",
+                "default": 0,
+                "min": 0,
+                "max": 10000,
+                "description": "Kunlik profit target (0 = cheksiz)",
+                "group": "Profit Settings"
+            },
+            "maxLoss": {
+                "name": "Max Loss",
+                "type": "float",
+                "default": 0,
+                "min": -10000,
+                "max": 0,
+                "description": "Maksimal zarar chegarasi (0 = cheksiz)",
+                "group": "Profit Settings"
+            },
+            # Position Sizing
+            "baseLot": {
+                "name": "Base Lot Size",
+                "type": "float",
+                "default": 0.01,
+                "min": 0.001,
+                "max": 10.0,
+                "description": "Boshlang'ich lot hajmi",
+                "group": "Position Sizing"
+            },
+            "leverage": {
+                "name": "Leverage",
+                "type": "int",
+                "default": 10,
+                "min": 1,
+                "max": 125,
+                "description": "Trading leverage",
+                "group": "Position Sizing"
+            },
+            "tradesPerDay": {
+                "name": "Trades Per Day",
+                "type": "int",
+                "default": 99,
+                "min": 1,
+                "max": 999,
+                "description": "Kunlik maksimal savdolar soni",
+                "group": "Risk Management"
             }
-        }
+        },
+        "capabilities": {
+            "spot": False,
+            "futures": True,
+            "margin": False
+        },
+        "riskWarning": "Bu robot grid hedging va martingale strategiyasini ishlatadi. Katta yo'qotishlarga olib kelishi mumkin. Ehtiyotkorlik bilan foydalaning.",
+        "minBalance": 100,
+        "recommendedBalance": 500
     }
+
+
+# Root level endpoints
+@app.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    return await _health_response()
+
+
+@app.get("/info")
+async def bot_info():
+    """Bot information endpoint - root level"""
+    return await _info_response()
+
+
+# API versioned endpoints (for HEMA compatibility)
+@app.get("/api/v1/health")
+async def health_check_v1():
+    """Health check endpoint - API v1"""
+    return await _health_response()
+
+
+@app.get("/api/v1/info")
+async def bot_info_v1():
+    """Bot info endpoint - API v1 (called by HEMA when adding bot)"""
+    return await _info_response()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
