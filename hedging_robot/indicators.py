@@ -94,12 +94,14 @@ class SMAIndicator:
         recent = candles[-self.period:]
 
         if self.ma_type == 'lwma':
-            # Linear Weighted MA
+            # Linear Weighted MA (M8 fix - eng yangi ma'lumotga eng katta og'irlik)
+            # Weights: period, period-1, ..., 2, 1 (eng yangi = period, eng eski = 1)
             weighted_sum = 0.0
             weight_sum = 0
 
             for i, candle in enumerate(recent):
-                weight = i + 1  # 1, 2, 3, ..., period
+                # i=0 -> weight=1, i=period-1 -> weight=period
+                weight = i + 1
                 price = candle.get_weighted_price()
                 weighted_sum += price * weight
                 weight_sum += weight
@@ -154,6 +156,26 @@ class ParabolicSARIndicator:
         self._af = self.af_start
         self._initialized = False
         self._last_value = 0.0
+
+    def save_state(self) -> dict:
+        """Indikator holatini saqlash (M6 fix)"""
+        return {
+            "is_long": self._is_long,
+            "sar": self._sar,
+            "ep": self._ep,
+            "af": self._af,
+            "initialized": self._initialized,
+            "last_value": self._last_value
+        }
+
+    def load_state(self, state: dict):
+        """Indikator holatini yuklash (M6 fix)"""
+        self._is_long = state.get("is_long", True)
+        self._sar = state.get("sar", 0.0)
+        self._ep = state.get("ep", 0.0)
+        self._af = state.get("af", self.af_start)
+        self._initialized = state.get("initialized", False)
+        self._last_value = state.get("last_value", 0.0)
 
     def calculate(self, candles: List[Candle]) -> float:
         """
@@ -278,6 +300,18 @@ class CCIIndicator:
         if len(self._history) >= 2:
             return self._history[-2]
         return 0.0
+
+    def save_state(self) -> dict:
+        """Indikator holatini saqlash (M6 fix)"""
+        return {
+            "last_value": self._last_value,
+            "history": self._history[-50:]  # Oxirgi 50 ta qiymat
+        }
+
+    def load_state(self, state: dict):
+        """Indikator holatini yuklash (M6 fix)"""
+        self._last_value = state.get("last_value", 0.0)
+        self._history = state.get("history", [])
 
     def calculate(self, candles: List[Candle]) -> float:
         """

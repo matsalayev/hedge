@@ -20,6 +20,104 @@ logger = logging.getLogger(__name__)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+#                               CANDLE CACHE (M7)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class CandleCache:
+    """
+    Candle caching - API so'rovlarini kamaytirish uchun (M7 fix)
+    """
+
+    def __init__(self, max_size: int = 200):
+        self.candles: List[Candle] = []
+        self.max_size = max_size
+        self.last_fetch_time: float = 0
+        self._cache_duration: float = 1.0  # 1 soniya
+        # G7 fix - Race condition uchun lock
+        self._lock = asyncio.Lock()
+
+    async def get_candles(
+        self,
+        client: BitgetClient,
+        symbol: str,
+        timeframe: str,
+        count: int = 100
+    ) -> List[Candle]:
+        """
+        Candle ma'lumotlarini olish (caching bilan)
+
+        Args:
+            client: Bitget API client
+            symbol: Trading symbol
+            timeframe: Timeframe
+            count: Kerakli candle soni
+
+        Returns:
+            Candle ro'yxati
+        """
+        # G7 fix - Lock bilan race condition oldini olish
+        async with self._lock:
+            now = time.time()
+
+            # Agar cache yangi bo'lsa, faqat oxirgi 5 ta candle ni yangilash
+            if self.candles and (now - self.last_fetch_time) < self._cache_duration:
+                return self.candles[-count:]
+
+            try:
+                # Agar cache bo'sh yoki juda eski bo'lsa - to'liq yuklash
+                if not self.candles or (now - self.last_fetch_time) > 60:
+                    candle_data = await client.get_candles(
+                        symbol=symbol,
+                        granularity=timeframe,
+                        limit=count
+                    )
+                    self.candles = [Candle.from_bitget(c) for c in candle_data]
+                else:
+                    # Faqat oxirgi 5 ta candle ni yangilash
+                    candle_data = await client.get_candles(
+                        symbol=symbol,
+                        granularity=timeframe,
+                        limit=5
+                    )
+                    self._merge_candles([Candle.from_bitget(c) for c in candle_data])
+
+                self.last_fetch_time = now
+
+            except Exception as e:
+                logger.warning(f"Candle fetch failed, using cache: {e}")
+
+            # Timestamp bo'yicha saralash
+            self.candles.sort(key=lambda c: c.timestamp)
+
+            return self.candles[-count:]
+
+    def _merge_candles(self, new_candles: List[Candle]):
+        """Yangi candlelarni cache ga qo'shish"""
+        # N8 fix - Bo'sh ro'yxat kelsa, ignore qilish
+        if not new_candles:
+            logger.debug("Empty candle list received, skipping merge")
+            return
+
+        # Timestamp bo'yicha dict yaratish (tez qidirish uchun)
+        existing_map = {c.timestamp: i for i, c in enumerate(self.candles)}
+
+        for candle in new_candles:
+            if candle.timestamp in existing_map:
+                # Mavjud candleni yangilash (joriy candle uchun)
+                idx = existing_map[candle.timestamp]
+                self.candles[idx] = candle
+            else:
+                # Yangi candle qo'shish
+                self.candles.append(candle)
+                existing_map[candle.timestamp] = len(self.candles) - 1
+
+        # Hajmni cheklash (timestamp bo'yicha eng yangisini saqlash)
+        if len(self.candles) > self.max_size:
+            self.candles.sort(key=lambda c: c.timestamp)
+            self.candles = self.candles[-self.max_size:]
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 #                               ROBOT STATE
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -60,6 +158,9 @@ class HedgingRobot:
         self.balance: float = 0.0
         self.candles: List[Candle] = []
 
+        # Candle cache (M7 fix)
+        self._candle_cache = CandleCache(max_size=200)
+
         # Stats
         self.start_time: Optional[datetime] = None
         self.tick_count: int = 0
@@ -67,6 +168,9 @@ class HedgingRobot:
 
         # Flags
         self._running: bool = False
+
+        # N2 fix - Race condition uchun lock
+        self._order_lock = asyncio.Lock()
 
     # ─────────────────────────────────────────────────────────────────────────
     #                           LIFECYCLE METHODS
@@ -246,19 +350,21 @@ class HedgingRobot:
         # Get current price
         self.current_price = await self.client.get_price(self.config.trading.SYMBOL)
 
-        # Get candles
-        candle_data = await self.client.get_candles(
+        # Get candles (M7 fix - caching bilan)
+        self.candles = await self._candle_cache.get_candles(
+            client=self.client,
             symbol=self.config.trading.SYMBOL,
-            granularity=self.config.entry.TIMEFRAME,
-            limit=100
+            timeframe=self.config.entry.TIMEFRAME,
+            count=100
         )
 
-        self.candles = [Candle.from_bitget(c) for c in candle_data]
-        self.candles.sort(key=lambda c: c.timestamp)  # Sort by time
-
-        # Update balance periodically
-        if self.tick_count % 30 == 0:
+        # Update balance periodically (har 5 tickda - M3 fix)
+        if self.tick_count % 5 == 0:
             self.balance = await self.client.get_balance()
+
+        # Position sync (har 10 tickda)
+        if self.tick_count % 10 == 0:
+            await self._sync_positions()
 
     def _is_new_bar(self) -> bool:
         """Yangi sham ochildimi?"""
@@ -332,41 +438,54 @@ class HedgingRobot:
         if not self.strategy.can_trade_today():
             return
 
-        # BUY initial order
-        if (self.strategy.fire_buy and
-            not self.strategy.buy_positions and
-            not self.strategy.should_stop_trading()):
+        # N2 fix - Lock bilan race condition oldini olish
+        async with self._order_lock:
+            # BUY initial order
+            if (self.strategy.fire_buy and
+                not self.strategy.buy_positions and
+                not self.strategy.should_stop_trading()):
 
-            await self._open_buy(self.config.money.BASE_LOT, level=1)
-            self.strategy.fire_buy = False
-            self.strategy.increment_today_trades()
+                await self._open_buy(self.config.money.BASE_LOT, level=1)
+                self.strategy.fire_buy = False
+                self.strategy.increment_today_trades()
 
-        # SELL initial order
-        if (self.strategy.fire_sell and
-            not self.strategy.sell_positions and
-            not self.strategy.should_stop_trading()):
+            # SELL initial order
+            if (self.strategy.fire_sell and
+                not self.strategy.sell_positions and
+                not self.strategy.should_stop_trading()):
 
-            await self._open_sell(self.config.money.BASE_LOT, level=1)
-            self.strategy.fire_sell = False
-            self.strategy.increment_today_trades()
+                await self._open_sell(self.config.money.BASE_LOT, level=1)
+                self.strategy.fire_sell = False
+                self.strategy.increment_today_trades()
 
     async def _check_grid_additions(self):
         """Grid orderlarini tekshirish"""
-        # BUY grid
-        should_add, level, lot = self.strategy.should_add_buy_grid(self.current_price)
-        if should_add:
-            await self._open_buy(lot, level)
+        # N2 fix - Lock bilan race condition oldini olish
+        async with self._order_lock:
+            # BUY grid
+            should_add, level, lot = self.strategy.should_add_buy_grid(self.current_price)
+            if should_add:
+                await self._open_buy(lot, level)
 
-        # SELL grid
-        should_add, level, lot = self.strategy.should_add_sell_grid(self.current_price)
-        if should_add:
-            await self._open_sell(lot, level)
+            # SELL grid
+            should_add, level, lot = self.strategy.should_add_sell_grid(self.current_price)
+            if should_add:
+                await self._open_sell(lot, level)
 
     async def _open_buy(self, lot: float, level: int):
         """BUY order ochish"""
         try:
             # Lot limitlarni tekshirish
             lot = max(self.config.money.MIN_LOT, min(lot, self.config.money.MAX_LOT))
+
+            # G8 fix - Balance tekshirish
+            required_margin = (lot * self.current_price) / self.config.trading.LEVERAGE
+            if self.balance < required_margin * 1.1:  # 10% buffer
+                logger.warning(
+                    f"Insufficient balance for BUY: required={required_margin:.2f}, "
+                    f"available={self.balance:.2f}"
+                )
+                return
 
             result = await self.client.open_long(
                 symbol=self.config.trading.SYMBOL,
@@ -394,6 +513,15 @@ class HedgingRobot:
         try:
             # Lot limitlarni tekshirish
             lot = max(self.config.money.MIN_LOT, min(lot, self.config.money.MAX_LOT))
+
+            # G8 fix - Balance tekshirish
+            required_margin = (lot * self.current_price) / self.config.trading.LEVERAGE
+            if self.balance < required_margin * 1.1:  # 10% buffer
+                logger.warning(
+                    f"Insufficient balance for SELL: required={required_margin:.2f}, "
+                    f"available={self.balance:.2f}"
+                )
+                return
 
             result = await self.client.open_short(
                 symbol=self.config.trading.SYMBOL,
@@ -466,6 +594,22 @@ class HedgingRobot:
         """Barcha pozitsiyalarni yopish"""
         await self._close_buy_positions()
         await self._close_sell_positions()
+
+    async def _sync_positions(self):
+        """Exchange pozitsiyalarini sinxronizatsiya qilish"""
+        # G2 fix - Lock bilan race condition oldini olish
+        async with self._order_lock:
+            try:
+                exchange_positions = await self.client.get_positions(
+                    symbol=self.config.trading.SYMBOL
+                )
+                await self.strategy.sync_positions_from_exchange(
+                    exchange_positions=exchange_positions,
+                    symbol=self.config.trading.SYMBOL,
+                    current_price=self.current_price
+                )
+            except Exception as e:
+                logger.warning(f"Position sync failed: {e}")
 
     # ─────────────────────────────────────────────────────────────────────────
     #                           DISPLAY

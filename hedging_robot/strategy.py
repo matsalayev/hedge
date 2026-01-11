@@ -16,6 +16,9 @@ from .indicators import Candle, SMAIndicator, ParabolicSARIndicator, CCIIndicato
 
 logger = logging.getLogger(__name__)
 
+# Martingale limit - base lot dan maksimal ko'paytirish
+MAX_MARTINGALE_MULTIPLIER = 10.0  # Maksimal 10x
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #                               POSITION DATA
@@ -241,20 +244,44 @@ class HedgingStrategy:
         }
         return distances.get(level, self.grid.SPACE_PERCENT)
 
-    def get_grid_lot(self, level: int, last_lot: float) -> float:
+    def get_grid_lot(self, level: int, last_lot: float, base_lot: float = None) -> float:
         """
         Grid level uchun lot hajmini hisoblash
 
         Args:
             level: Grid level (1-4)
             last_lot: Oxirgi order lot hajmi
+            base_lot: Boshlang'ich lot hajmi (martingale limit uchun)
 
         Returns:
             Yangi lot hajmi
         """
         if self.grid.MULTIPLIER > 0:
-            # Martingale
-            return round(last_lot * self.grid.MULTIPLIER, 4)
+            # Martingale bilan limit (M5 fix)
+            new_lot = last_lot * self.grid.MULTIPLIER
+
+            # N7 fix - Agar base_lot berilmagan bo'lsa, config dan olish
+            if base_lot is None or base_lot <= 0:
+                base_lot = self.config.money.BASE_LOT if hasattr(self, 'config') else last_lot
+
+            # G4 fix - Ikki limitni tekshirish: martingale va absolute MAX_LOT
+            # 1. Martingale limit (base_lot * 10)
+            martingale_max = base_lot * MAX_MARTINGALE_MULTIPLIER
+
+            # 2. Absolute MAX_LOT (config dan)
+            absolute_max = self.config.money.MAX_LOT if hasattr(self, 'config') else martingale_max
+
+            # Eng kichik limitni olish
+            max_lot = min(martingale_max, absolute_max)
+
+            if new_lot > max_lot:
+                logger.warning(
+                    f"Martingale limit reached: {new_lot:.4f} > {max_lot:.4f}. "
+                    f"Capping to {max_lot:.4f}"
+                )
+                new_lot = max_lot
+
+            return round(new_lot, 4)
         else:
             # Fixed lots
             lots = {
@@ -265,12 +292,13 @@ class HedgingStrategy:
             }
             return lots.get(level, self.grid.SPACE_LOTS)
 
-    def should_add_buy_grid(self, current_price: float) -> Tuple[bool, int, float]:
+    def should_add_buy_grid(self, current_price: float, base_lot: float = None) -> Tuple[bool, int, float]:
         """
         Buy grid order qo'shish kerakmi?
 
         Args:
             current_price: Joriy narx (Ask)
+            base_lot: Boshlang'ich lot hajmi (martingale limit uchun)
 
         Returns:
             (should_add, grid_level, lot_size)
@@ -297,17 +325,23 @@ class HedgingStrategy:
         trigger_price = largest.entry_price * (1 - distance / 100)
 
         if current_price <= trigger_price:
-            lot = self.get_grid_lot(level, largest.lot)
+            # Base lot ni birinchi pozitsiyadan olish (agar berilmagan bo'lsa)
+            if base_lot is None and self.buy_positions:
+                first_pos = min(self.buy_positions, key=lambda p: p.timestamp)
+                base_lot = first_pos.lot
+
+            lot = self.get_grid_lot(level, largest.lot, base_lot)
             return True, level, lot
 
         return False, 0, 0.0
 
-    def should_add_sell_grid(self, current_price: float) -> Tuple[bool, int, float]:
+    def should_add_sell_grid(self, current_price: float, base_lot: float = None) -> Tuple[bool, int, float]:
         """
         Sell grid order qo'shish kerakmi?
 
         Args:
             current_price: Joriy narx (Bid)
+            base_lot: Boshlang'ich lot hajmi (martingale limit uchun)
 
         Returns:
             (should_add, grid_level, lot_size)
@@ -334,7 +368,12 @@ class HedgingStrategy:
         trigger_price = largest.entry_price * (1 + distance / 100)
 
         if current_price >= trigger_price:
-            lot = self.get_grid_lot(level, largest.lot)
+            # Base lot ni birinchi pozitsiyadan olish (agar berilmagan bo'lsa)
+            if base_lot is None and self.sell_positions:
+                first_pos = min(self.sell_positions, key=lambda p: p.timestamp)
+                base_lot = first_pos.lot
+
+            lot = self.get_grid_lot(level, largest.lot, base_lot)
             return True, level, lot
 
         return False, 0, 0.0
@@ -377,15 +416,35 @@ class HedgingStrategy:
         return position
 
     def get_largest_buy_position(self) -> Optional[HedgingPosition]:
-        """Eng katta (eng past narxdagi) buy pozitsiyani olish"""
+        """
+        Grid trigger uchun buy pozitsiyani olish (N3 fix)
+
+        Grid strategiyasida BUY uchun:
+        - Narx pastga tushganda yangi order qo'shiladi
+        - Eng PAST narxdagi pozitsiyadan keyingi trigger hisoblanadi
+
+        Returns:
+            Eng past narxdagi buy pozitsiya
+        """
         if not self.buy_positions:
             return None
+        # Eng past narxdagi = eng chuqur = oxirgi qo'shilgan grid order
         return min(self.buy_positions, key=lambda p: p.entry_price)
 
     def get_largest_sell_position(self) -> Optional[HedgingPosition]:
-        """Eng katta (eng yuqori narxdagi) sell pozitsiyani olish"""
+        """
+        Grid trigger uchun sell pozitsiyani olish (N3 fix)
+
+        Grid strategiyasida SELL uchun:
+        - Narx yuqoriga ko'tarilganda yangi order qo'shiladi
+        - Eng YUQORI narxdagi pozitsiyadan keyingi trigger hisoblanadi
+
+        Returns:
+            Eng yuqori narxdagi sell pozitsiya
+        """
         if not self.sell_positions:
             return None
+        # Eng yuqori narxdagi = eng chuqur = oxirgi qo'shilgan grid order
         return max(self.sell_positions, key=lambda p: p.entry_price)
 
     def get_buy_pnl(self, current_price: float, leverage: int = 1) -> float:
@@ -532,12 +591,15 @@ class HedgingStrategy:
         """
         total_pnl = self.get_total_pnl(current_price, leverage)
 
-        # Global profit limit
+        # Global profit limit (faqat musbat qiymat berilgan bo'lsa)
         if self.profit.GLOBAL_PROFIT > 0 and total_pnl >= self.profit.GLOBAL_PROFIT:
+            logger.info(f"Global profit target hit: ${total_pnl:.2f} >= ${self.profit.GLOBAL_PROFIT:.2f}")
             return True, "GLOBAL_PROFIT"
 
-        # Max loss limit
+        # Max loss limit (faqat manfiy qiymat berilgan bo'lsa, ya'ni MAX_LOSS < 0)
+        # MAX_LOSS=-50 demak $50 zarar chegarasi
         if self.profit.MAX_LOSS < 0 and total_pnl <= self.profit.MAX_LOSS:
+            logger.warning(f"Max loss limit hit: ${total_pnl:.2f} <= ${self.profit.MAX_LOSS:.2f}")
             return True, "MAX_LOSS"
 
         return False, ""
@@ -648,6 +710,153 @@ class HedgingStrategy:
         self.sell_allowed = True
         self._stop_trading = False
         self.sar.reset()
+
+    # ─────────────────────────────────────────────────────────────────────────
+    #                           POSITION SYNC
+    # ─────────────────────────────────────────────────────────────────────────
+
+    async def sync_positions_from_exchange(
+        self,
+        exchange_positions: List[dict],
+        symbol: str,
+        current_price: float
+    ) -> bool:
+        """
+        Exchange pozitsiyalarini local state bilan sinxronizatsiya qilish
+
+        Args:
+            exchange_positions: Exchange dan olingan pozitsiyalar
+            symbol: Trading symbol
+            current_price: Joriy narx
+
+        Returns:
+            True agar muvaffaqiyatli
+        """
+        try:
+            # G5 fix - Avval barcha pozitsiyalarni yig'ish, keyin base price aniqlash
+            # Temporary lists for collecting positions by side
+            temp_buy_positions = []
+            temp_sell_positions = []
+
+            for pos in exchange_positions:
+                # Faqat bizning symbol uchun
+                if pos.symbol != symbol:
+                    continue
+
+                # Pozitsiya hajmi 0 dan katta bo'lsa
+                if pos.size <= 0:
+                    continue
+
+                if pos.side == 'long':
+                    temp_buy_positions.append(pos)
+                else:
+                    temp_sell_positions.append(pos)
+
+            # Find base prices for each side
+            # BUY: eng yuqori entry price (grid pastga ketadi)
+            # SELL: eng past entry price (grid yuqoriga ketadi)
+            buy_base_price = max((p.entry_price for p in temp_buy_positions), default=current_price)
+            sell_base_price = min((p.entry_price for p in temp_sell_positions), default=current_price)
+
+            # Yangi pozitsiyalar ro'yxati
+            new_buy_positions: List[HedgingPosition] = []
+            new_sell_positions: List[HedgingPosition] = []
+
+            # BUY pozitsiyalarni yaratish
+            for pos in temp_buy_positions:
+                grid_level = self._detect_grid_level(pos.entry_price, buy_base_price)
+                position = HedgingPosition(
+                    id=f"sync-{pos.side}-{int(time.time()*1000)}",
+                    side='buy',
+                    entry_price=pos.entry_price,
+                    lot=pos.size,
+                    grid_level=grid_level,
+                    pnl=pos.unrealized_pnl
+                )
+                new_buy_positions.append(position)
+
+            # SELL pozitsiyalarni yaratish
+            for pos in temp_sell_positions:
+                grid_level = self._detect_grid_level(pos.entry_price, sell_base_price)
+                position = HedgingPosition(
+                    id=f"sync-{pos.side}-{int(time.time()*1000)}",
+                    side='sell',
+                    entry_price=pos.entry_price,
+                    lot=pos.size,
+                    grid_level=grid_level,
+                    pnl=pos.unrealized_pnl
+                )
+                new_sell_positions.append(position)
+
+            # Local state bilan taqqoslash
+            local_buy_count = len(self.buy_positions)
+            local_sell_count = len(self.sell_positions)
+            exchange_buy_count = len(new_buy_positions)
+            exchange_sell_count = len(new_sell_positions)
+
+            # Agar farq bo'lsa - sync qilish
+            if local_buy_count != exchange_buy_count or local_sell_count != exchange_sell_count:
+                logger.warning(
+                    f"Position sync: Local (buy={local_buy_count}, sell={local_sell_count}) != "
+                    f"Exchange (buy={exchange_buy_count}, sell={exchange_sell_count})"
+                )
+
+                # N5 fix - Atomic update (ikkala list ni bitta operatsiyada yangilash)
+                # Avval eski holatni saqlash (rollback uchun)
+                old_buy = self.buy_positions
+                old_sell = self.sell_positions
+
+                try:
+                    # Exchange state ni qabul qilish (atomik)
+                    self.buy_positions = new_buy_positions
+                    self.sell_positions = new_sell_positions
+
+                    logger.info(
+                        f"Position sync complete: {len(self.buy_positions)} buys, "
+                        f"{len(self.sell_positions)} sells"
+                    )
+                except Exception as e:
+                    # Rollback - eski holatni qaytarish
+                    self.buy_positions = old_buy
+                    self.sell_positions = old_sell
+                    logger.error(f"Position sync rollback: {e}")
+                    return False
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Position sync failed: {e}")
+            return False
+
+    def _detect_grid_level(self, entry_price: float, base_price: float) -> int:
+        """
+        Entry narx va base narx asosida grid levelni aniqlash
+
+        G5 fix - base_price ishlatish (first order entry price)
+        Grid level base price dan qanchalik uzoqligiga qarab aniqlanadi
+
+        Args:
+            entry_price: Pozitsiya ochilgan narx
+            base_price: Birinchi order narxi (BUY uchun eng yuqori, SELL uchun eng past)
+
+        Returns:
+            Grid level (1-4)
+        """
+        if base_price <= 0:
+            return 1
+
+        # Narx farqi foizi (base price dan)
+        distance_percent = abs(entry_price - base_price) / base_price * 100
+
+        # Grid levellarni tekshirish
+        if distance_percent <= self.grid.SPACE_PERCENT:
+            return 1
+        elif distance_percent <= self.grid.SPACE1_PERCENT:
+            return 2
+        elif distance_percent <= self.grid.SPACE2_PERCENT:
+            return 3
+        else:
+            return 4
 
     def get_stats(self) -> Dict:
         """Statistikani olish"""

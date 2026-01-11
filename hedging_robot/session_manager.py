@@ -296,7 +296,44 @@ class SessionManager:
             cls._instance = super().__new__(cls)
             cls._instance._sessions: Dict[str, UserSession] = {}
             cls._instance._lock = asyncio.Lock()
+            cls._instance._last_cleanup = datetime.utcnow()
         return cls._instance
+
+    async def cleanup_old_sessions(self, max_age_hours: int = 24):
+        """
+        N9 fix - Eski to'xtatilgan sessiyalarni tozalash
+
+        Args:
+            max_age_hours: Sessiya yoshi chegarasi (soat)
+        """
+        async with self._lock:
+            now = datetime.utcnow()
+
+            # Faqat har soatda bir marta tozalash
+            if (now - self._last_cleanup).total_seconds() < 3600:
+                return
+
+            self._last_cleanup = now
+            to_remove = []
+
+            for user_id, session in self._sessions.items():
+                # Faqat STOPPED yoki ERROR sessiyalarni tekshirish
+                if session.status not in (SessionStatus.STOPPED, SessionStatus.ERROR):
+                    continue
+
+                # Yoshi tekshirish
+                if session.stopped_at:
+                    age_hours = (now - session.stopped_at).total_seconds() / 3600
+                    if age_hours > max_age_hours:
+                        to_remove.append(user_id)
+
+            # Eski sessiyalarni o'chirish
+            for user_id in to_remove:
+                del self._sessions[user_id]
+                logger.info(f"Cleaned up old session: {user_id}")
+
+            if to_remove:
+                logger.info(f"Cleaned up {len(to_remove)} old sessions")
 
     @property
     def active_sessions(self) -> int:

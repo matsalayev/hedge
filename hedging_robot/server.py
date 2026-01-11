@@ -4,11 +4,13 @@ Hedging Grid Robot - FastAPI Server
 HEMA platformasi bilan REST API integratsiyasi
 """
 
+import asyncio
 import os
 import logging
 import time
 import hashlib
 import hmac
+from contextlib import asynccontextmanager
 from typing import Dict, Any, Optional
 from datetime import datetime
 
@@ -29,6 +31,7 @@ BOT_ID = os.getenv("BOT_ID", "hedging-grid-bot")
 BOT_NAME = os.getenv("BOT_NAME", "Hedging Grid Robot")
 BOT_VERSION = os.getenv("BOT_VERSION", "1.0.0")
 BOT_SECRET = os.getenv("BOT_SECRET", "")
+ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "")  # M9 fix - Admin auth
 
 START_TIME = datetime.utcnow()
 
@@ -82,13 +85,56 @@ class ErrorResponse(BaseModel):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+#                               BACKGROUND TASKS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# G10 fix - Background cleanup task flag
+_cleanup_task: Optional[asyncio.Task] = None
+
+
+async def _cleanup_loop():
+    """G10 fix - Background task for session cleanup"""
+    session_manager = get_session_manager()
+    while True:
+        try:
+            await asyncio.sleep(3600)  # Har 1 soatda
+            await session_manager.cleanup_old_sessions(max_age_hours=24)
+            logger.debug("Session cleanup completed")
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"Session cleanup error: {e}")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """G10 fix - Lifespan context manager for cleanup task"""
+    global _cleanup_task
+    # Startup
+    _cleanup_task = asyncio.create_task(_cleanup_loop())
+    logger.info("Session cleanup task started")
+
+    yield
+
+    # Shutdown
+    if _cleanup_task:
+        _cleanup_task.cancel()
+        try:
+            await _cleanup_task
+        except asyncio.CancelledError:
+            pass
+    logger.info("Session cleanup task stopped")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 #                               FASTAPI APP
 # ═══════════════════════════════════════════════════════════════════════════════
 
 app = FastAPI(
     title=BOT_NAME,
     description="Grid Hedging Trading Robot for HEMA Platform",
-    version=BOT_VERSION
+    version=BOT_VERSION,
+    lifespan=lifespan  # G10 fix
 )
 
 # CORS
@@ -105,10 +151,15 @@ app.add_middleware(
 #                               AUTHENTICATION
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# N1 fix - Development mode flag
+ALLOW_INSECURE = os.getenv("ALLOW_INSECURE", "false").lower() == "true"
+
+
 def verify_signature(timestamp: str, payload: str, signature: str, secret: str) -> bool:
     """Verify HMAC signature"""
     if not secret:
-        return True  # No secret configured, skip verification
+        # N1 fix - secret majburiy
+        raise ValueError("Secret key is required for signature verification")
 
     message = f"{timestamp}.{payload}"
     expected = hmac.new(
@@ -122,8 +173,16 @@ def verify_signature(timestamp: str, payload: str, signature: str, secret: str) 
 
 async def verify_request(request: Request):
     """Verify incoming request from HEMA"""
+    # N1 fix - BOT_SECRET majburiy (development mode dan tashqari)
     if not BOT_SECRET:
-        return True
+        if ALLOW_INSECURE:
+            logger.warning("SECURITY WARNING: BOT_SECRET not configured, skipping verification!")
+            return True
+        else:
+            raise HTTPException(
+                status_code=500,
+                detail="Server misconfigured: BOT_SECRET not set. Set ALLOW_INSECURE=true for development."
+            )
 
     timestamp = request.headers.get("X-Webhook-Timestamp", "")
     signature = request.headers.get("X-Webhook-Signature", "")
@@ -562,9 +621,33 @@ async def unregister_user(request: Request, user_id: str):
 #                               ADMIN ENDPOINTS
 # ═══════════════════════════════════════════════════════════════════════════════
 
+async def verify_admin(x_admin_key: str = Header(None, alias="X-Admin-Key")):
+    """
+    Admin API key tekshirish (M9 fix)
+
+    Header: X-Admin-Key: <admin_api_key>
+    """
+    if not ADMIN_API_KEY:
+        # Admin key konfiguratsiya qilinmagan - barcha admin requestlar rad etiladi
+        raise HTTPException(
+            status_code=401,
+            detail="Admin API not configured. Set ADMIN_API_KEY environment variable."
+        )
+
+    if not x_admin_key:
+        raise HTTPException(status_code=401, detail="Missing X-Admin-Key header")
+
+    if not hmac.compare_digest(x_admin_key, ADMIN_API_KEY):
+        raise HTTPException(status_code=401, detail="Invalid admin key")
+
+    return True
+
+
 @app.get("/api/v1/admin/sessions")
-async def list_sessions():
+async def list_sessions(x_admin_key: str = Header(None, alias="X-Admin-Key")):
     """List all sessions (admin)"""
+    await verify_admin(x_admin_key)
+
     manager = get_session_manager()
 
     sessions = []
@@ -579,8 +662,10 @@ async def list_sessions():
 
 
 @app.get("/api/v1/admin/resources")
-async def get_resources():
+async def get_resources(x_admin_key: str = Header(None, alias="X-Admin-Key")):
     """Get resource usage"""
+    await verify_admin(x_admin_key)
+
     process = psutil.Process()
 
     return {
@@ -592,8 +677,13 @@ async def get_resources():
 
 
 @app.post("/api/v1/admin/close-positions/{user_id}")
-async def emergency_close_positions(user_id: str):
+async def emergency_close_positions(
+    user_id: str,
+    x_admin_key: str = Header(None, alias="X-Admin-Key")
+):
     """Emergency close all positions for a user"""
+    await verify_admin(x_admin_key)
+
     manager = get_session_manager()
     session = manager.get_session(user_id)
 

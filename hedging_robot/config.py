@@ -172,6 +172,48 @@ class GridConfig:
         """Get total max orders for one side"""
         return self.SPACE_ORDERS + self.SPACE1_ORDERS + self.SPACE2_ORDERS + self.SPACE3_ORDERS
 
+    def validate_grid_levels(self) -> List[str]:
+        """
+        Grid level konfiguratsiyasini tekshirish
+
+        Returns:
+            Xatolar ro'yxati (bo'sh = OK)
+        """
+        errors = []
+
+        # Level qiymatlari
+        levels = [
+            (1, self.SPACE_PERCENT, self.SPACE_ORDERS, self.SPACE_LOTS),
+            (2, self.SPACE1_PERCENT, self.SPACE1_ORDERS, self.SPACE1_LOTS),
+            (3, self.SPACE2_PERCENT, self.SPACE2_ORDERS, self.SPACE2_LOTS),
+            (4, self.SPACE3_PERCENT, self.SPACE3_ORDERS, self.SPACE3_LOTS),
+        ]
+
+        prev_percent = 0.0
+        for level_num, percent, orders, lots in levels:
+            # Percent qiymati oldingisidan katta bo'lishi kerak
+            if percent <= prev_percent:
+                errors.append(
+                    f"Grid Level {level_num} ({percent}%) must be greater than "
+                    f"Level {level_num-1} ({prev_percent}%)"
+                )
+
+            # Percent musbat bo'lishi kerak
+            if percent <= 0:
+                errors.append(f"Grid Level {level_num} percent must be positive")
+
+            # Orders musbat bo'lishi kerak
+            if orders <= 0:
+                errors.append(f"Grid Level {level_num} orders must be positive")
+
+            # Lots musbat bo'lishi kerak
+            if lots <= 0:
+                errors.append(f"Grid Level {level_num} lots must be positive")
+
+            prev_percent = percent
+
+        return errors
+
 
 @dataclass
 class EntryConfig:
@@ -278,11 +320,9 @@ class RobotConfig:
         if self.trading.LEVERAGE < 1 or self.trading.LEVERAGE > 125:
             errors.append(f"Invalid leverage: {self.trading.LEVERAGE} (must be 1-125)")
 
-        # Grid validation
-        if self.grid.SPACE_PERCENT <= 0:
-            errors.append("SPACE_PERCENT must be positive")
-        if self.grid.SPACE_ORDERS < 1:
-            errors.append("SPACE_ORDERS must be at least 1")
+        # Grid validation (M2 fix - grid level overlap tekshirish)
+        grid_errors = self.grid.validate_grid_levels()
+        errors.extend(grid_errors)
 
         # Entry validation
         if not self.entry.USE_SMA_SAR and self.entry.CCI_PERIOD <= 0:

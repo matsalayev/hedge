@@ -19,6 +19,9 @@ import aiohttp
 
 logger = logging.getLogger(__name__)
 
+# M10 fix - Webhook queue limit
+MAX_QUEUE_SIZE = 1000
+
 
 @dataclass
 class WebhookConfig:
@@ -40,9 +43,13 @@ class WebhookClient:
     def __init__(self, config: WebhookConfig):
         self.config = config
         self._session: Optional[aiohttp.ClientSession] = None
-        self._queue: asyncio.Queue = asyncio.Queue()
+        self._queue: asyncio.Queue = asyncio.Queue(maxsize=MAX_QUEUE_SIZE)  # M10 fix
         self._worker_task: Optional[asyncio.Task] = None
         self._user_id: Optional[str] = None
+        # G9 fix - Queue overflow metrics
+        self._dropped_events: int = 0
+        self._sent_events: int = 0
+        self._failed_events: int = 0
 
     def set_user_id(self, user_id: str):
         """Set user ID for webhook events"""
@@ -96,8 +103,31 @@ class WebhookClient:
                 **data
             }
         }
-        await self._queue.put(event)
-        return True
+
+        # M10 fix - Queue to'lgan bo'lsa, timeout bilan kutish
+        # N6 fix - Timeout 0.5s -> 2s (yetarli vaqt berish)
+        try:
+            await asyncio.wait_for(
+                self._queue.put(event),
+                timeout=2.0
+            )
+            return True
+        except asyncio.TimeoutError:
+            # G9 fix - Dropped event metric
+            self._dropped_events += 1
+            logger.warning(
+                f"Webhook queue full after 2s, dropping {event_type} event "
+                f"(total dropped: {self._dropped_events})"
+            )
+            return False
+        except asyncio.QueueFull:
+            # G9 fix - Dropped event metric
+            self._dropped_events += 1
+            logger.warning(
+                f"Webhook queue full, dropping {event_type} event "
+                f"(total dropped: {self._dropped_events})"
+            )
+            return False
 
     async def send_trade_opened(
         self,
@@ -313,7 +343,8 @@ class WebhookClient:
         def calc_position_pnl(pos, side):
             entry = pos.get("entry_price", 0)
             lot = pos.get("lot", 0)
-            if entry <= 0:
+            # G1 fix - barcha qiymatlarni tekshirish (division by zero oldini olish)
+            if entry <= 0 or lot <= 0 or current_price <= 0:
                 return 0.0, 0.0
             if side == "buy":
                 pnl = (current_price - entry) * lot * leverage
@@ -452,6 +483,8 @@ class WebhookClient:
                     response_text = await response.text()
 
                     if response.status in (200, 201, 202):
+                        # G9 fix - Sent event metric
+                        self._sent_events += 1
                         logger.debug(f"[WEBHOOK] SUCCESS: {event['event']}")
                         return True
                     else:
@@ -468,5 +501,23 @@ class WebhookClient:
             if attempt < self.config.max_retries - 1:
                 await asyncio.sleep(self.config.retry_delay * (attempt + 1))
 
+        # G9 fix - Failed event metric
+        self._failed_events += 1
         logger.error(f"Webhook failed after {self.config.max_retries} attempts: {event['event']}")
         return False
+
+    def get_stats(self) -> Dict[str, Any]:
+        """
+        G9 fix - Webhook statistikasini olish
+
+        Returns:
+            Dict with webhook stats
+        """
+        return {
+            "queue_size": self._queue.qsize(),
+            "queue_max": MAX_QUEUE_SIZE,
+            "sent_events": self._sent_events,
+            "dropped_events": self._dropped_events,
+            "failed_events": self._failed_events,
+            "total_events": self._sent_events + self._dropped_events + self._failed_events
+        }

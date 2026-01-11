@@ -224,9 +224,31 @@ class BitgetClient:
                         if "rate" in msg.lower() or "limit" in msg.lower():
                             raise BitgetRateLimitError(code, msg)
 
+                        # N4 fix - Temporary errors uchun retry
+                        # 50000: System busy, please try again later
+                        # 40034: Request too frequent
+                        if code in ("50000", "40034", "40001"):
+                            logger.warning(f"Temporary error (attempt {attempt + 1}): [{code}] {msg}")
+                            if attempt < self.config.MAX_RETRIES - 1:
+                                await asyncio.sleep(2 ** attempt)
+                                # Headers yangilash (timestamp eskiradi)
+                                headers = self._get_headers(method, request_path, body_str)
+                                continue
+                            # Oxirgi urinishda xatoni tashlash
+
                         raise BitgetAPIError(code, msg, data)
 
                     return data.get("data", data)
+
+            except asyncio.TimeoutError:
+                # G3 fix - Timeout xatosini handle qilish
+                logger.warning(f"Request timeout (attempt {attempt + 1}): {url}")
+                if attempt < self.config.MAX_RETRIES - 1:
+                    await asyncio.sleep(2 ** attempt)
+                    # Headers yangilash (timestamp eskiradi)
+                    headers = self._get_headers(method, request_path, body_str)
+                else:
+                    raise BitgetAPIError("TIMEOUT", f"Request timeout after {self.config.TIMEOUT}s")
 
             except aiohttp.ClientError as e:
                 logger.error(f"Request error (attempt {attempt + 1}): {e}")
