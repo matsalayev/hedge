@@ -672,11 +672,11 @@ class HedgingStrategy:
         return buy_pnl + sell_pnl, buy_count + sell_count
 
     def _update_win_rate(self):
-        """Win rate ni yangilash (0.0-1.0 formatda - HEMA standart)"""
+        """Win rate ni yangilash (0-100 formatda - HEMA standart)"""
         total = self.stats["winning_trades"] + self.stats["losing_trades"]
         if total > 0:
-            # HEMA 0.0-1.0 formatni kutadi, 0-100 emas!
-            self.stats["win_rate"] = round(self.stats["winning_trades"] / total, 4)
+            # HEMA 0-100 formatni kutadi (83.3 = 83.3%)
+            self.stats["win_rate"] = round(self.stats["winning_trades"] / total * 100, 2)
 
     # ─────────────────────────────────────────────────────────────────────────
     #                           UTILITY METHODS

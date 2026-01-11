@@ -173,8 +173,8 @@ class WebhookClient:
         reason: str = "MANUAL"
     ):
         """Trade yopildi eventi"""
-        # HEMA 0.0-1.0 formatni kutadi (0.05 = 5%), 0-100 emas!
-        pnl_percent = ((exit_price - entry_price) / entry_price) if entry_price > 0 else 0
+        # HEMA 0-100 formatni kutadi (5 = 5%), 0.0-1.0 emas!
+        pnl_percent = ((exit_price - entry_price) / entry_price * 100) if entry_price > 0 else 0
         if side.upper() == "SELL":
             pnl_percent = -pnl_percent
 
@@ -214,8 +214,8 @@ class WebhookClient:
         """Barcha pozitsiyalar yopildi eventi (profit target)"""
         pnl_percent = 0.0
         if avg_entry_price > 0:
-            # HEMA 0.0-1.0 formatni kutadi (0.05 = 5%), 0-100 emas!
-            pnl_percent = (exit_price - avg_entry_price) / avg_entry_price
+            # HEMA 0-100 formatni kutadi (5 = 5%), 0.0-1.0 emas!
+            pnl_percent = (exit_price - avg_entry_price) / avg_entry_price * 100
             if side.upper() == "SELL":
                 pnl_percent = -pnl_percent
 
@@ -350,12 +350,12 @@ class WebhookClient:
                 return 0.0, 0.0
             if side == "buy":
                 pnl = (current_price - entry) * lot * leverage
-                # HEMA 0.0-1.0 formatni kutadi (0.05 = 5%), 0-100 emas!
-                pnl_percent = (current_price - entry) / entry
+                # HEMA 0-100 formatni kutadi (5 = 5%), 0.0-1.0 emas!
+                pnl_percent = (current_price - entry) / entry * 100
             else:
                 pnl = (entry - current_price) * lot * leverage
-                # HEMA 0.0-1.0 formatni kutadi (0.05 = 5%), 0-100 emas!
-                pnl_percent = (entry - current_price) / entry
+                # HEMA 0-100 formatni kutadi (5 = 5%), 0.0-1.0 emas!
+                pnl_percent = (entry - current_price) / entry * 100
             return round(pnl, 4), round(pnl_percent, 6)
 
         # BUY pozitsiyalarni tayyorlash
