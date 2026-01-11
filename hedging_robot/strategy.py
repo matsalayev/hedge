@@ -451,17 +451,22 @@ class HedgingStrategy:
         """
         Buy pozitsiyalarning PnL ni hisoblash
 
+        USDT-M Perpetual Futures uchun:
+        - PnL = position_size * price_change
+        - Leverage faqat margin uchun kerak, PnL ga ta'sir qilmaydi!
+
         Args:
             current_price: Joriy narx
-            leverage: Leverage
+            leverage: Leverage (faqat backward compatibility uchun, ishlatilmaydi)
 
         Returns:
             Total PnL (USDT)
         """
         total_pnl = 0.0
         for pos in self.buy_positions:
-            # Buy: (current - entry) * lot * leverage
-            pnl = (current_price - pos.entry_price) * pos.lot * leverage
+            # Buy: (current - entry) * lot
+            # Leverage PnL ga ta'sir qilmaydi - faqat margin uchun kerak!
+            pnl = (current_price - pos.entry_price) * pos.lot
             pos.pnl = pnl
             total_pnl += pnl
         return total_pnl
@@ -470,17 +475,22 @@ class HedgingStrategy:
         """
         Sell pozitsiyalarning PnL ni hisoblash
 
+        USDT-M Perpetual Futures uchun:
+        - PnL = position_size * price_change
+        - Leverage faqat margin uchun kerak, PnL ga ta'sir qilmaydi!
+
         Args:
             current_price: Joriy narx
-            leverage: Leverage
+            leverage: Leverage (faqat backward compatibility uchun, ishlatilmaydi)
 
         Returns:
             Total PnL (USDT)
         """
         total_pnl = 0.0
         for pos in self.sell_positions:
-            # Sell: (entry - current) * lot * leverage
-            pnl = (pos.entry_price - current_price) * pos.lot * leverage
+            # Sell: (entry - current) * lot
+            # Leverage PnL ga ta'sir qilmaydi - faqat margin uchun kerak!
+            pnl = (pos.entry_price - current_price) * pos.lot
             pos.pnl = pnl
             total_pnl += pnl
         return total_pnl

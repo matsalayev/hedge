@@ -339,9 +339,8 @@ class WebhookClient:
 
         Har bir tick da yuboriladi
         """
-        leverage = settings.get("leverage", 10)
-
         # Har bir pozitsiya uchun PnL hisoblash
+        # USDT-M Perpetual Futures: PnL = lot * price_change (leverage ta'sir qilmaydi!)
         def calc_position_pnl(pos, side):
             entry = pos.get("entry_price", 0)
             lot = pos.get("lot", 0)
@@ -349,11 +348,13 @@ class WebhookClient:
             if entry <= 0 or lot <= 0 or current_price <= 0:
                 return 0.0, 0.0
             if side == "buy":
-                pnl = (current_price - entry) * lot * leverage
+                # PnL = lot * (current - entry) - leverage kerak emas!
+                pnl = (current_price - entry) * lot
                 # HEMA 0-100 formatni kutadi (5 = 5%), 0.0-1.0 emas!
                 pnl_percent = (current_price - entry) / entry * 100
             else:
-                pnl = (entry - current_price) * lot * leverage
+                # PnL = lot * (entry - current) - leverage kerak emas!
+                pnl = (entry - current_price) * lot
                 # HEMA 0-100 formatni kutadi (5 = 5%), 0.0-1.0 emas!
                 pnl_percent = (entry - current_price) / entry * 100
             return round(pnl, 4), round(pnl_percent, 6)
