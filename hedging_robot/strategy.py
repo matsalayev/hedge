@@ -618,13 +618,14 @@ class HedgingStrategy:
         total_pnl = self.get_buy_pnl(close_price, leverage)
         count = len(self.buy_positions)
 
-        # Update stats
-        if total_pnl > 0:
-            self.stats["winning_trades"] += count
-        else:
-            self.stats["losing_trades"] += count
-        self.stats["total_profit"] += total_pnl
-        self._update_win_rate()
+        # Update stats - BUG FIX: 1 ta trade operatsiyasi, count emas!
+        if count > 0:  # Faqat pozitsiyalar bo'lsa
+            if total_pnl > 0:
+                self.stats["winning_trades"] += 1  # 1 ta winning trade
+            else:
+                self.stats["losing_trades"] += 1   # 1 ta losing trade
+            self.stats["total_profit"] += total_pnl
+            self._update_win_rate()
 
         # Clear positions
         self.buy_positions.clear()
@@ -643,13 +644,14 @@ class HedgingStrategy:
         total_pnl = self.get_sell_pnl(close_price, leverage)
         count = len(self.sell_positions)
 
-        # Update stats
-        if total_pnl > 0:
-            self.stats["winning_trades"] += count
-        else:
-            self.stats["losing_trades"] += count
-        self.stats["total_profit"] += total_pnl
-        self._update_win_rate()
+        # Update stats - BUG FIX: 1 ta trade operatsiyasi, count emas!
+        if count > 0:  # Faqat pozitsiyalar bo'lsa
+            if total_pnl > 0:
+                self.stats["winning_trades"] += 1  # 1 ta winning trade
+            else:
+                self.stats["losing_trades"] += 1   # 1 ta losing trade
+            self.stats["total_profit"] += total_pnl
+            self._update_win_rate()
 
         # Clear positions
         self.sell_positions.clear()
@@ -670,10 +672,11 @@ class HedgingStrategy:
         return buy_pnl + sell_pnl, buy_count + sell_count
 
     def _update_win_rate(self):
-        """Win rate ni yangilash"""
+        """Win rate ni yangilash (0.0-1.0 formatda - HEMA standart)"""
         total = self.stats["winning_trades"] + self.stats["losing_trades"]
         if total > 0:
-            self.stats["win_rate"] = round(self.stats["winning_trades"] / total * 100, 2)
+            # HEMA 0.0-1.0 formatni kutadi, 0-100 emas!
+            self.stats["win_rate"] = round(self.stats["winning_trades"] / total, 4)
 
     # ─────────────────────────────────────────────────────────────────────────
     #                           UTILITY METHODS
