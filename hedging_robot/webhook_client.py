@@ -434,7 +434,7 @@ class WebhookClient:
                     "unrealizedPnL": round(total_buy_pnl + total_sell_pnl, 4)
                 },
                 "settings": {
-                    "leverage": leverage,
+                    "leverage": settings.get("leverage", 10),
                     "timeframe": settings.get("timeframe", "1H"),
                     "baseLot": settings.get("base_lot", 0.01),
                     "useSmaEntry": settings.get("use_sma_sar", True),

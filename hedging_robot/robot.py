@@ -566,6 +566,14 @@ class HedgingRobot:
 
         except BitgetAPIError as e:
             logger.error(f"Failed to close BUY positions: {e}")
+            # P1 fix - Phantom position bug
+            # Agar exchange "No position to close" desa, local state ni tozalash
+            # Bu infinite loop ni oldini oladi
+            error_str = str(e)
+            if "22002" in error_str or "No position" in error_str.lower():
+                logger.warning("Exchange reports no BUY position - clearing local state to prevent loop")
+                self.strategy.buy_positions.clear()
+                self.strategy.fire_buy = False
 
     async def _close_sell_positions(self):
         """Barcha SELL pozitsiyalarni yopish"""
@@ -589,6 +597,14 @@ class HedgingRobot:
 
         except BitgetAPIError as e:
             logger.error(f"Failed to close SELL positions: {e}")
+            # P1 fix - Phantom position bug
+            # Agar exchange "No position to close" desa, local state ni tozalash
+            # Bu infinite loop ni oldini oladi
+            error_str = str(e)
+            if "22002" in error_str or "No position" in error_str.lower():
+                logger.warning("Exchange reports no SELL position - clearing local state to prevent loop")
+                self.strategy.sell_positions.clear()
+                self.strategy.fire_sell = False
 
     async def _close_all_positions(self):
         """Barcha pozitsiyalarni yopish"""
