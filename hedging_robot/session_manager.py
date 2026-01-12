@@ -238,6 +238,8 @@ class HedgingRobotWithWebhook(HedgingRobot):
 
         avg_price = self.strategy.get_average_buy_price()
         count = len(self.strategy.buy_positions)
+        # Calculate total lot BEFORE closing (positions will be cleared)
+        total_lot = sum(p.lot for p in self.strategy.buy_positions)
         positions_before = len(self.strategy.buy_positions)
 
         await super()._close_buy_positions()
@@ -245,12 +247,14 @@ class HedgingRobotWithWebhook(HedgingRobot):
         # Only send webhook if positions were actually closed (not cleared due to error)
         positions_after = len(self.strategy.buy_positions)
         if positions_after < positions_before and self.webhook_client:
-            pnl = (self.current_price - avg_price) * count * self.config.trading.LEVERAGE
+            # PnL = price_diff * total_lot * leverage (not count!)
+            pnl = (self.current_price - avg_price) * total_lot * self.config.trading.LEVERAGE
             await self.webhook_client.send_positions_closed(
                 user_bot_id=self.user_bot_id,
                 symbol=self.config.trading.SYMBOL,
                 side="BUY",
                 positions_count=count,
+                total_quantity=total_lot,
                 total_pnl=pnl,
                 avg_entry_price=avg_price,
                 exit_price=self.current_price,
@@ -264,6 +268,8 @@ class HedgingRobotWithWebhook(HedgingRobot):
 
         avg_price = self.strategy.get_average_sell_price()
         count = len(self.strategy.sell_positions)
+        # Calculate total lot BEFORE closing (positions will be cleared)
+        total_lot = sum(p.lot for p in self.strategy.sell_positions)
         positions_before = len(self.strategy.sell_positions)
 
         await super()._close_sell_positions()
@@ -271,12 +277,14 @@ class HedgingRobotWithWebhook(HedgingRobot):
         # Only send webhook if positions were actually closed (not cleared due to error)
         positions_after = len(self.strategy.sell_positions)
         if positions_after < positions_before and self.webhook_client:
-            pnl = (avg_price - self.current_price) * count * self.config.trading.LEVERAGE
+            # PnL = price_diff * total_lot * leverage (not count!)
+            pnl = (avg_price - self.current_price) * total_lot * self.config.trading.LEVERAGE
             await self.webhook_client.send_positions_closed(
                 user_bot_id=self.user_bot_id,
                 symbol=self.config.trading.SYMBOL,
                 side="SELL",
                 positions_count=count,
+                total_quantity=total_lot,
                 total_pnl=pnl,
                 avg_entry_price=avg_price,
                 exit_price=self.current_price,
