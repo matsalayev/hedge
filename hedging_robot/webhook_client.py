@@ -426,11 +426,9 @@ class WebhookClient:
                     "maxLoss": settings.get("max_loss", 0)
                 },
                 "performance": {
-                    "totalTrades": stats.get("total_trades", 0),
-                    "winningTrades": stats.get("winning_trades", 0),
-                    "losingTrades": stats.get("losing_trades", 0),
-                    "winRate": stats.get("win_rate", 0),
-                    "totalPnL": round(stats.get("total_profit", 0), 4),
+                    # Historical stats ni yubormaymiz - ular HEMA database da to'g'ri saqlanadi
+                    # Bot restart bo'lganda in-memory stats 0 ga qaytadi va noto'g'ri bo'ladi
+                    # Faqat real-time unrealizedPnL yuboramiz
                     "unrealizedPnL": round(total_buy_pnl + total_sell_pnl, 4)
                 },
                 "settings": {
