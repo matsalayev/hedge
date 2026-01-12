@@ -554,6 +554,36 @@ async def start_trading(request: Request, user_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/v1/users/{user_id}/close-positions", response_model=SuccessResponse)
+async def close_all_positions(request: Request, user_id: str):
+    """Close all open positions for a user (without stopping the bot)"""
+    await verify_request(request)
+
+    manager = get_session_manager()
+    session = manager.get_session(user_id)
+
+    if not session:
+        raise HTTPException(status_code=404, detail=f"User {user_id} not found")
+
+    if not session.robot or session.status != SessionStatus.RUNNING:
+        raise HTTPException(status_code=400, detail="Robot not running")
+
+    try:
+        # Use the new method that sends proper webhooks
+        await session.robot.close_all_positions_manually(reason="MANUAL_CLOSE")
+
+        return SuccessResponse(
+            message="All positions closed",
+            data={
+                "buy_closed": len(session.robot.strategy.buy_positions) == 0,
+                "sell_closed": len(session.robot.strategy.sell_positions) == 0
+            }
+        )
+    except Exception as e:
+        logger.error(f"Failed to close positions for {user_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/v1/users/{user_id}/stop", response_model=SuccessResponse)
 async def stop_trading(request: Request, user_id: str):
     """Stop trading for a user"""

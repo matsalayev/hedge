@@ -231,17 +231,20 @@ class HedgingRobotWithWebhook(HedgingRobot):
                 grid_level=level
             )
 
-    async def _close_buy_positions(self):
+    async def _close_buy_positions(self, reason: str = "PROFIT_TARGET"):
         """Close buy positions with webhook"""
         if not self.strategy.buy_positions:
             return
 
         avg_price = self.strategy.get_average_buy_price()
         count = len(self.strategy.buy_positions)
+        positions_before = len(self.strategy.buy_positions)
 
         await super()._close_buy_positions()
 
-        if self.webhook_client:
+        # Only send webhook if positions were actually closed (not cleared due to error)
+        positions_after = len(self.strategy.buy_positions)
+        if positions_after < positions_before and self.webhook_client:
             pnl = (self.current_price - avg_price) * count * self.config.trading.LEVERAGE
             await self.webhook_client.send_positions_closed(
                 user_bot_id=self.user_bot_id,
@@ -251,20 +254,23 @@ class HedgingRobotWithWebhook(HedgingRobot):
                 total_pnl=pnl,
                 avg_entry_price=avg_price,
                 exit_price=self.current_price,
-                reason="PROFIT_TARGET"
+                reason=reason
             )
 
-    async def _close_sell_positions(self):
+    async def _close_sell_positions(self, reason: str = "PROFIT_TARGET"):
         """Close sell positions with webhook"""
         if not self.strategy.sell_positions:
             return
 
         avg_price = self.strategy.get_average_sell_price()
         count = len(self.strategy.sell_positions)
+        positions_before = len(self.strategy.sell_positions)
 
         await super()._close_sell_positions()
 
-        if self.webhook_client:
+        # Only send webhook if positions were actually closed (not cleared due to error)
+        positions_after = len(self.strategy.sell_positions)
+        if positions_after < positions_before and self.webhook_client:
             pnl = (avg_price - self.current_price) * count * self.config.trading.LEVERAGE
             await self.webhook_client.send_positions_closed(
                 user_bot_id=self.user_bot_id,
@@ -274,8 +280,15 @@ class HedgingRobotWithWebhook(HedgingRobot):
                 total_pnl=pnl,
                 avg_entry_price=avg_price,
                 exit_price=self.current_price,
-                reason="PROFIT_TARGET"
+                reason=reason
             )
+
+    async def close_all_positions_manually(self, reason: str = "MANUAL_CLOSE"):
+        """Manually close all positions - called from API endpoint"""
+        logger.info(f"[MANUAL_CLOSE] Closing all positions for {self.user_bot_id}")
+        await self._close_buy_positions(reason=reason)
+        await self._close_sell_positions(reason=reason)
+        logger.info(f"[MANUAL_CLOSE] All positions closed for {self.user_bot_id}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
