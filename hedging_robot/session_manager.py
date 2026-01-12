@@ -247,8 +247,8 @@ class HedgingRobotWithWebhook(HedgingRobot):
         # Only send webhook if positions were actually closed (not cleared due to error)
         positions_after = len(self.strategy.buy_positions)
         if positions_after < positions_before and self.webhook_client:
-            # PnL = price_diff * total_lot * leverage (not count!)
-            pnl = (self.current_price - avg_price) * total_lot * self.config.trading.LEVERAGE
+            # USDT-M Perpetual: PnL = price_diff * quantity (leverage affects margin, not PnL!)
+            pnl = (self.current_price - avg_price) * total_lot
             await self.webhook_client.send_positions_closed(
                 user_bot_id=self.user_bot_id,
                 symbol=self.config.trading.SYMBOL,
@@ -277,8 +277,8 @@ class HedgingRobotWithWebhook(HedgingRobot):
         # Only send webhook if positions were actually closed (not cleared due to error)
         positions_after = len(self.strategy.sell_positions)
         if positions_after < positions_before and self.webhook_client:
-            # PnL = price_diff * total_lot * leverage (not count!)
-            pnl = (avg_price - self.current_price) * total_lot * self.config.trading.LEVERAGE
+            # USDT-M Perpetual: PnL = price_diff * quantity (leverage affects margin, not PnL!)
+            pnl = (avg_price - self.current_price) * total_lot
             await self.webhook_client.send_positions_closed(
                 user_bot_id=self.user_bot_id,
                 symbol=self.config.trading.SYMBOL,
