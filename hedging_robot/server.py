@@ -647,6 +647,87 @@ async def unregister_user(request: Request, user_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/v1/users/{user_id}/settings", response_model=SuccessResponse)
+async def get_user_settings(request: Request, user_id: str):
+    """
+    Get user's current trading settings
+
+    HEMA "Fetch from Server" tugmasi uchun - user ning barcha sozlamalarini qaytaradi
+    """
+    await verify_request(request)
+
+    manager = get_session_manager()
+    session = manager.get_session(user_id)
+
+    if not session:
+        raise HTTPException(status_code=404, detail=f"User {user_id} not found")
+
+    # Asosiy sozlamalar
+    settings_data = {
+        # Trading pair va asosiy sozlamalar
+        "tradingPair": session.trading_pair,
+        "leverage": session.leverage,
+        "isDemo": session.is_demo,
+
+        # HEMA standart fieldlar (agar kerak bo'lsa)
+        "tradeAmount": session.base_lot,  # Base lot size
+        "takeProfit": session.single_order_profit,  # Single order profit target
+        "stopLoss": abs(session.max_loss) if session.max_loss < 0 else 0,  # Max loss as positive
+        "maxConcurrentTrades": session.space_orders + session.space1_orders + session.space2_orders + session.space3_orders,
+
+        # Barcha custom sozlamalar (HEMA Settings Dialog uchun)
+        "customSettings": {
+            # Grid Settings
+            "multiplier": session.multiplier,
+            "spacePercent": session.space_percent,
+            "spaceOrders": session.space_orders,
+            "space1Percent": session.space1_percent,
+            "space1Orders": session.space1_orders,
+            "space2Percent": session.space2_percent,
+            "space2Orders": session.space2_orders,
+            "space3Percent": session.space3_percent,
+            "space3Orders": session.space3_orders,
+
+            # Entry Settings
+            "useSmaSar": session.use_sma_sar,
+            "smaPeriod": session.sma_period,
+            "sarAf": session.sar_af,
+            "sarMax": session.sar_max,
+            "reverseOrder": session.reverse_order,
+            "cciPeriod": session.cci_period,
+            "cciMax": session.cci_max,
+            "cciMin": session.cci_min,
+            "timeframe": session.timeframe,
+
+            # Profit Settings
+            "singleOrderProfit": session.single_order_profit,
+            "pairGlobalProfit": session.pair_global_profit,
+            "globalProfit": session.global_profit,
+            "maxLoss": session.max_loss,
+            "tradesPerDay": session.trades_per_day,
+
+            # Money/Position Settings
+            "baseLot": session.base_lot,
+            "minLot": session.min_lot,
+            "maxLot": session.max_lot,
+            "leverage": session.leverage,
+        },
+
+        # Session metadata
+        "session": {
+            "status": session.status.value,
+            "userBotId": session.user_bot_id,
+            "registeredAt": session.registered_at.isoformat() + "Z" if session.registered_at else None,
+            "startedAt": session.started_at.isoformat() + "Z" if session.started_at else None,
+        }
+    }
+
+    return SuccessResponse(
+        message="Settings retrieved",
+        data=settings_data
+    )
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #                               ADMIN ENDPOINTS
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -681,13 +762,16 @@ async def list_sessions(x_admin_key: str = Header(None, alias="X-Admin-Key")):
     manager = get_session_manager()
 
     sessions = []
-    for user_id, session in manager._sessions.items():
-        sessions.append(session.to_dict())
+    for session_key, session in manager._sessions.items():
+        session_data = session.to_dict()
+        session_data["session_key"] = session_key  # Session key ham qo'shish
+        sessions.append(session_data)
 
     return {
         "total": len(sessions),
         "active": manager.active_sessions,
-        "sessions": sessions
+        "sessions": sessions,
+        "bot_id_mappings": len(manager._sessions_by_bot_id)  # Mapping count
     }
 
 
@@ -739,9 +823,16 @@ async def debug_sessions():
     """Debug session info"""
     manager = get_session_manager()
 
-    result = {}
-    for user_id, session in manager._sessions.items():
-        result[user_id] = {
+    result = {
+        "sessions": {},
+        "bot_id_mappings": dict(manager._sessions_by_bot_id)
+    }
+
+    for session_key, session in manager._sessions.items():
+        result["sessions"][session_key] = {
+            "user_id": session.user_id,
+            "user_bot_id": session.user_bot_id,
+            "trading_pair": session.trading_pair,
             "status": session.status.value,
             "has_robot": session.robot is not None,
             "has_webhook": session.webhook_client is not None,

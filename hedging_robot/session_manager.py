@@ -308,6 +308,11 @@ class SessionManager:
     Ko'p foydalanuvchi sessiyalarini boshqaruvchi
 
     Singleton pattern
+
+    Session Keys:
+    - Asosiy key: user_id (HEMA API path compatibility uchun)
+    - Agar bir user bir nechta bot ishlatsa, har biri alohida session
+    - user_bot_id orqali ham lookup qilish mumkin
     """
 
     _instance: Optional['SessionManager'] = None
@@ -315,7 +320,8 @@ class SessionManager:
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
-            cls._instance._sessions: Dict[str, UserSession] = {}
+            cls._instance._sessions: Dict[str, UserSession] = {}  # key: user_id
+            cls._instance._sessions_by_bot_id: Dict[str, str] = {}  # user_bot_id -> user_id mapping
             cls._instance._lock = asyncio.Lock()
             cls._instance._last_cleanup = datetime.utcnow()
         return cls._instance
@@ -337,7 +343,7 @@ class SessionManager:
             self._last_cleanup = now
             to_remove = []
 
-            for user_id, session in self._sessions.items():
+            for session_key, session in self._sessions.items():
                 # Faqat STOPPED yoki ERROR sessiyalarni tekshirish
                 if session.status not in (SessionStatus.STOPPED, SessionStatus.ERROR):
                     continue
@@ -346,12 +352,15 @@ class SessionManager:
                 if session.stopped_at:
                     age_hours = (now - session.stopped_at).total_seconds() / 3600
                     if age_hours > max_age_hours:
-                        to_remove.append(user_id)
+                        to_remove.append((session_key, session.user_bot_id))
 
             # Eski sessiyalarni o'chirish
-            for user_id in to_remove:
-                del self._sessions[user_id]
-                logger.info(f"Cleaned up old session: {user_id}")
+            for session_key, user_bot_id in to_remove:
+                del self._sessions[session_key]
+                # Mapping dan ham o'chirish
+                if user_bot_id and user_bot_id in self._sessions_by_bot_id:
+                    del self._sessions_by_bot_id[user_bot_id]
+                logger.info(f"Cleaned up old session: {session_key}")
 
             if to_remove:
                 logger.info(f"Cleaned up {len(to_remove)} old sessions")
@@ -380,7 +389,7 @@ class SessionManager:
 
         Args:
             user_id: HEMA user ID
-            user_bot_id: HEMA UserBot ID
+            user_bot_id: HEMA UserBot ID (unique per bot instance)
             exchange: Exchange credentials
             settings: Trading settings
             webhook_url: Webhook URL
@@ -388,12 +397,22 @@ class SessionManager:
 
         Returns:
             UserSession
+
+        Note:
+            Har bir user_bot_id uchun alohida session yaratiladi.
+            Bir user bir nechta bot instance ishlatishi mumkin (har xil symbol).
+            HEMA API path'lari user_id ishlatadi, shuning uchun lookup
+            user_id bo'yicha ham, user_bot_id bo'yicha ham ishlaydi.
         """
         async with self._lock:
+            # user_bot_id asosiy key sifatida ishlatiladi (unique per bot instance)
+            # Agar user_bot_id bo'sh bo'lsa, user_id ga fallback
+            session_key = user_bot_id if user_bot_id else user_id
+
             # Check if already exists
-            if user_id in self._sessions:
-                logger.warning(f"User {user_id} already registered, updating...")
-                session = self._sessions[user_id]
+            if session_key in self._sessions:
+                logger.warning(f"Session {session_key} already registered, updating...")
+                session = self._sessions[session_key]
             else:
                 session = UserSession(user_id=user_id, user_bot_id=user_bot_id)
 
@@ -449,32 +468,58 @@ class SessionManager:
             session.webhook_secret = webhook_secret
 
             session.status = SessionStatus.REGISTERED
-            self._sessions[user_id] = session
 
-            logger.info(f"User {user_id} registered for {session.trading_pair}")
+            # Session ni saqlash (user_bot_id yoki user_id bilan)
+            self._sessions[session_key] = session
+
+            # user_bot_id -> session_key mapping saqlash (teskari lookup uchun)
+            if user_bot_id:
+                self._sessions_by_bot_id[user_bot_id] = session_key
+
+            logger.info(f"Session {session_key} registered for {session.trading_pair} (user: {user_id})")
             return session
 
-    async def unregister_user(self, user_id: str) -> bool:
-        """Foydalanuvchini ro'yxatdan o'chirish"""
+    async def unregister_user(self, identifier: str) -> bool:
+        """
+        Sessiyani ro'yxatdan o'chirish
+
+        Args:
+            identifier: user_id, user_bot_id, yoki session_key
+        """
         async with self._lock:
-            if user_id not in self._sessions:
+            # Session ni topish
+            session = self.get_session(identifier)
+            if not session:
                 return False
 
-            session = self._sessions[user_id]
+            # Session key ni aniqlash
+            session_key = session.user_bot_id if session.user_bot_id else session.user_id
 
             # Stop if running
             if session.status == SessionStatus.RUNNING:
-                await self.stop_trading(user_id)
+                await self._stop_trading_internal(session)
 
-            del self._sessions[user_id]
-            logger.info(f"User {user_id} unregistered")
+            # Mappingdan o'chirish
+            if session.user_bot_id and session.user_bot_id in self._sessions_by_bot_id:
+                del self._sessions_by_bot_id[session.user_bot_id]
+
+            # Sessionni o'chirish
+            if session_key in self._sessions:
+                del self._sessions[session_key]
+
+            logger.info(f"Session {session_key} unregistered (user: {session.user_id})")
             return True
 
-    async def start_trading(self, user_id: str) -> UserSession:
-        """Savdoni boshlash"""
-        session = self.get_session(user_id)
+    async def start_trading(self, identifier: str) -> UserSession:
+        """
+        Savdoni boshlash
+
+        Args:
+            identifier: user_id, user_bot_id, yoki session_key
+        """
+        session = self.get_session(identifier)
         if not session:
-            raise ValueError(f"User {user_id} not found")
+            raise ValueError(f"Session {identifier} not found")
 
         if session.status == SessionStatus.RUNNING:
             return session
@@ -514,15 +559,30 @@ class SessionManager:
         logger.info(f"Started trading for user {user_id}")
         return session
 
-    async def stop_trading(self, user_id: str) -> UserSession:
-        """Savdoni to'xtatish"""
-        session = self.get_session(user_id)
+    async def stop_trading(self, identifier: str) -> UserSession:
+        """
+        Savdoni to'xtatish
+
+        Args:
+            identifier: user_id, user_bot_id, yoki session_key
+        """
+        session = self.get_session(identifier)
         if not session:
-            raise ValueError(f"User {user_id} not found")
+            raise ValueError(f"Session {identifier} not found")
 
         if session.status != SessionStatus.RUNNING:
             return session
 
+        await self._stop_trading_internal(session)
+        return session
+
+    async def _stop_trading_internal(self, session: UserSession):
+        """
+        Internal: Session ni to'xtatish
+
+        Args:
+            session: To'xtatish kerak bo'lgan session
+        """
         session.status = SessionStatus.STOPPING
 
         # Stop robot
@@ -557,14 +617,18 @@ class SessionManager:
         session.webhook_client = None
         session.task = None
 
-        logger.info(f"Stopped trading for user {user_id}")
-        return session
+        logger.info(f"Stopped trading for session {session.user_bot_id} (user: {session.user_id})")
 
-    async def get_status(self, user_id: str) -> Dict:
-        """Foydalanuvchi statusini olish"""
-        session = self.get_session(user_id)
+    async def get_status(self, identifier: str) -> Dict:
+        """
+        Session statusini olish
+
+        Args:
+            identifier: user_id, user_bot_id, yoki session_key
+        """
+        session = self.get_session(identifier)
         if not session:
-            raise ValueError(f"User {user_id} not found")
+            raise ValueError(f"Session {identifier} not found")
 
         result = session.to_dict()
 
@@ -574,9 +638,64 @@ class SessionManager:
 
         return result
 
-    def get_session(self, user_id: str) -> Optional[UserSession]:
-        """Sessiyani olish"""
-        return self._sessions.get(user_id)
+    def get_session(self, identifier: str) -> Optional[UserSession]:
+        """
+        Sessiyani olish
+
+        Args:
+            identifier: user_id, user_bot_id, yoki session_key
+
+        Returns:
+            UserSession yoki None
+
+        Lookup tartibi:
+        1. To'g'ridan-to'g'ri session_key bo'yicha
+        2. user_bot_id mapping orqali
+        3. user_id bo'yicha (birinchi topilgan session)
+        """
+        # 1. Direct lookup by key
+        if identifier in self._sessions:
+            return self._sessions[identifier]
+
+        # 2. Lookup by user_bot_id mapping
+        if identifier in self._sessions_by_bot_id:
+            session_key = self._sessions_by_bot_id[identifier]
+            return self._sessions.get(session_key)
+
+        # 3. Fallback: search by user_id field
+        for session in self._sessions.values():
+            if session.user_id == identifier:
+                return session
+
+        return None
+
+    def get_sessions_by_user(self, user_id: str) -> list:
+        """
+        User ID bo'yicha barcha sessiyalarni olish
+
+        Args:
+            user_id: HEMA user ID
+
+        Returns:
+            List of UserSession for this user
+        """
+        return [s for s in self._sessions.values() if s.user_id == user_id]
+
+    def get_session_by_bot_id(self, user_bot_id: str) -> Optional[UserSession]:
+        """
+        UserBot ID bo'yicha sessiyani olish
+
+        Args:
+            user_bot_id: HEMA UserBot ID (unique per bot instance)
+
+        Returns:
+            UserSession yoki None
+        """
+        if user_bot_id in self._sessions_by_bot_id:
+            session_key = self._sessions_by_bot_id[user_bot_id]
+            return self._sessions.get(session_key)
+        # Direct lookup (agar user_bot_id session key sifatida ishlatilgan bo'lsa)
+        return self._sessions.get(user_bot_id)
 
     def _create_robot_config(self, session: UserSession) -> RobotConfig:
         """UserSession dan RobotConfig yaratish"""

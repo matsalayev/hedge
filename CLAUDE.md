@@ -28,6 +28,11 @@ No test suite exists in this project.
 
 Grid hedging trading robot for Bitget Futures, ported from MQL4 Expert Advisor.
 
+### Two Operating Modes
+
+1. **CLI mode** (`run.py`): Single-user standalone bot, config via `.env` + CLI args
+2. **Server mode** (`run_server.py`): Multi-user REST API for HEMA platform integration
+
 ### Component Flow
 
 ```
@@ -53,12 +58,26 @@ SessionManager (session_manager.py) ── Singleton, manages all user sessions
     └── WebhookClient (webhook_client.py) ── Async queue-based event sender
 ```
 
+### Key Source Files
+
+| File | Purpose |
+|------|---------|
+| `config.py` | Dataclass configs: RobotConfig → APIConfig, TradingConfig, GridConfig, EntryConfig, ProfitConfig, MoneyConfig, TimeConfig, WebhookConfig |
+| `robot.py` | Main async tick loop, state machine (IDLE → STARTING → RUNNING → STOPPING → STOPPED) |
+| `strategy.py` | Grid trading logic, entry signals, position management, profit taking |
+| `indicators.py` | Technical indicators: SMA/LWMA, Parabolic SAR, CCI |
+| `api_client.py` | Bitget REST API with HMAC-SHA256 auth; raises BitgetAPIError, BitgetAuthError, BitgetRateLimitError |
+| `webhook_client.py` | Async queue-based webhook sender with HMAC-SHA256 signing |
+| `session_manager.py` | Multi-user session management with HedgingRobotWithWebhook subclass |
+| `server.py` | FastAPI REST endpoints |
+
 ### Key Patterns
 
 - **Async throughout**: asyncio tasks, aiohttp sessions, queue-based webhooks
 - **Dataclass configs**: All configuration in `config.py` as dataclasses
 - **State machine**: RobotState enum (IDLE → STARTING → RUNNING → STOPPING → STOPPED)
 - **4-level grid**: SPACE/SPACE1/SPACE2/SPACE3 with configurable distances and order counts
+- **Candle caching**: 1-second cache to avoid API rate limits
 
 ### Trading Logic (strategy.py)
 
@@ -86,6 +105,10 @@ Events sent to HEMA: `trade_opened`, `trade_closed`, `status_update` (every 5 ti
 ## Configuration
 
 All settings via `.env` file (see `.env.example`). Key groups:
+- **Server**: SERVER_PORT, BOT_ID, BOT_SECRET, ADMIN_API_KEY
+- **API**: BITGET_API_KEY, BITGET_SECRET_KEY, BITGET_PASSPHRASE, DEMO_MODE
+- **Trading**: TRADING_SYMBOL, LEVERAGE
 - **Grid**: MULTIPLIER, SPACE_PERCENT/ORDERS/LOTS for each of 4 levels
 - **Entry**: USE_SMA_SAR, SMA_PERIOD, SAR_AF/MAX, CCI_PERIOD/MAX/MIN, TIMEFRAME
 - **Profit**: SINGLE_ORDER_PROFIT, PAIR_GLOBAL_PROFIT, GLOBAL_PROFIT, MAX_LOSS
+- **Time**: START_HOUR/MINUTE, FINISH_HOUR/MINUTE, TICK_INTERVAL
