@@ -537,7 +537,7 @@ class SessionManager:
                 secret=session.webhook_secret
             )
             webhook_client = WebhookClient(webhook_config)
-            webhook_client.set_user_id(user_id)
+            webhook_client.set_user_id(session.user_id)
             await webhook_client.start()
             session.webhook_client = webhook_client
 
@@ -556,7 +556,7 @@ class SessionManager:
                 session.user_bot_id, "running", "Trading started"
             )
 
-        logger.info(f"Started trading for user {user_id}")
+        logger.info(f"Started trading for session {session.user_bot_id} (user: {session.user_id})")
         return session
 
     async def stop_trading(self, identifier: str) -> UserSession:
