@@ -102,6 +102,19 @@ Admin (requires `X-Admin-Key` header): `/api/v1/admin/sessions`, `/api/v1/admin/
 
 Events sent to HEMA: `trade_opened`, `trade_closed`, `status_update` (every 5 ticks), `status_changed`, `error_occurred`, `balance_warning`, `global_limit_hit`
 
+## Production Deployment
+
+- **URL**: https://hedge.azro.uz
+- **Container**: `x0c00g4c0socsgccc4gskk4o-*`
+- **Port**: 8082
+- **Platform**: Coolify on 213.136.91.165
+
+```bash
+# View logs
+docker ps | grep x0c00g4c0socsgccc4gskk4o
+docker logs <container-id> -f --tail 100
+```
+
 ## Configuration
 
 All settings via `.env` file (see `.env.example`). Key groups:
@@ -112,3 +125,35 @@ All settings via `.env` file (see `.env.example`). Key groups:
 - **Entry**: USE_SMA_SAR, SMA_PERIOD, SAR_AF/MAX, CCI_PERIOD/MAX/MIN, TIMEFRAME
 - **Profit**: SINGLE_ORDER_PROFIT, PAIR_GLOBAL_PROFIT, GLOBAL_PROFIT, MAX_LOSS
 - **Time**: START_HOUR/MINUTE, FINISH_HOUR/MINUTE, TICK_INTERVAL
+
+## HEMA Integration
+
+### Config Schema Format
+The `/api/v1/info` endpoint returns `configSchema` compatible with HEMA's `bot-settings-dialog.tsx`:
+```json
+{
+  "configSchema": {
+    "multiplier": {
+      "label": "Martingale Multiplier",
+      "type": "number",
+      "default": 1.5,
+      "min": 0,
+      "max": 5.0,
+      "step": 0.1,
+      "description": "Lot ko'paytirish koeffitsiyenti",
+      "group": "Grid Settings"
+    }
+  }
+}
+```
+
+Supported types: `number`, `string`, `boolean`, `select`
+
+### Settings Endpoint
+`GET /api/v1/users/{user_id}/settings` returns current user settings including:
+- Base trading settings (tradingPair, leverage, tradeAmount)
+- Custom settings (grid config, entry settings, profit settings)
+
+### Related Services
+- HEMA Platform: https://hema.azro.uz
+- RSI Bot: https://rsi.azro.uz

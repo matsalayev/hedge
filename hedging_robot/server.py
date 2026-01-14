@@ -236,7 +236,8 @@ async def _info_response():
         "exchange": "bitget",
         "supportedPairs": [
             "BTCUSDT", "ETHUSDT", "BNBUSDT", "XRPUSDT", "ADAUSDT",
-            "DOGEUSDT", "SOLUSDT", "DOTUSDT", "MATICUSDT", "LTCUSDT"
+            "DOGEUSDT", "SOLUSDT", "DOTUSDT", "MATICUSDT", "LTCUSDT",
+            "AVAXUSDT", "LINKUSDT", "ATOMUSDT", "UNIUSDT", "APTUSDT"
         ],
         "supportedExchanges": ["bitget"],
         "minTradeAmount": 10,
@@ -249,201 +250,231 @@ async def _info_response():
             "stopLoss": 0,
             "maxConcurrentTrades": 10
         },
-        "customSettings": {
+        # HEMA-compatible configSchema format
+        # type: 'number' | 'string' | 'boolean' | 'select'
+        # label instead of name
+        "configSchema": {
             # Grid Settings
             "multiplier": {
-                "name": "Martingale Multiplier",
-                "type": "float",
+                "label": "Martingale Multiplier",
+                "type": "number",
                 "default": 1.5,
                 "min": 0,
                 "max": 5.0,
+                "step": 0.1,
                 "description": "Lot ko'paytirish koeffitsiyenti (0 = fixed lot)",
                 "group": "Grid Settings"
             },
             "spacePercent": {
-                "name": "Grid Space %",
-                "type": "float",
+                "label": "Grid Space %",
+                "type": "number",
                 "default": 0.5,
                 "min": 0.1,
                 "max": 10.0,
+                "step": 0.1,
                 "description": "Grid Level 1 masofa (foizda)",
                 "group": "Grid Settings"
             },
             "spaceOrders": {
-                "name": "Grid Level 1 Orders",
-                "type": "int",
+                "label": "Grid Level 1 Orders",
+                "type": "number",
                 "default": 5,
                 "min": 1,
                 "max": 50,
+                "step": 1,
                 "description": "Grid Level 1 dagi orderlar soni",
                 "group": "Grid Settings"
             },
             "space1Percent": {
-                "name": "Grid Level 2 %",
-                "type": "float",
+                "label": "Grid Level 2 %",
+                "type": "number",
                 "default": 1.5,
                 "min": 0.5,
                 "max": 20.0,
+                "step": 0.1,
                 "description": "Grid Level 2 masofa (foizda)",
                 "group": "Grid Settings"
             },
             "space2Percent": {
-                "name": "Grid Level 3 %",
-                "type": "float",
+                "label": "Grid Level 3 %",
+                "type": "number",
                 "default": 3.0,
                 "min": 1.0,
                 "max": 30.0,
+                "step": 0.5,
                 "description": "Grid Level 3 masofa (foizda)",
                 "group": "Grid Settings"
             },
             "space3Percent": {
-                "name": "Grid Level 4 %",
-                "type": "float",
+                "label": "Grid Level 4 %",
+                "type": "number",
                 "default": 5.0,
                 "min": 2.0,
                 "max": 50.0,
+                "step": 0.5,
                 "description": "Grid Level 4 masofa (foizda)",
                 "group": "Grid Settings"
             },
             # Entry Settings
             "useSmaSar": {
-                "name": "Use SMA/SAR Entry",
-                "type": "bool",
+                "label": "Use SMA/SAR Entry",
+                "type": "boolean",
                 "default": True,
                 "description": "SMA/Parabolic SAR signallarini ishlatish",
                 "group": "Entry Settings"
             },
             "smaPeriod": {
-                "name": "SMA Period",
-                "type": "int",
+                "label": "SMA Period",
+                "type": "number",
                 "default": 7,
                 "min": 3,
                 "max": 100,
+                "step": 1,
                 "description": "SMA indikator davri",
                 "group": "Entry Settings"
             },
             "sarAf": {
-                "name": "SAR Acceleration",
-                "type": "float",
+                "label": "SAR Acceleration",
+                "type": "number",
                 "default": 0.1,
                 "min": 0.01,
                 "max": 0.5,
+                "step": 0.01,
                 "description": "Parabolic SAR acceleration factor",
                 "group": "Entry Settings"
             },
             "sarMax": {
-                "name": "SAR Maximum",
-                "type": "float",
+                "label": "SAR Maximum",
+                "type": "number",
                 "default": 0.8,
                 "min": 0.1,
                 "max": 1.0,
+                "step": 0.1,
                 "description": "Parabolic SAR maksimal AF",
                 "group": "Entry Settings"
             },
             "cciPeriod": {
-                "name": "CCI Period",
-                "type": "int",
+                "label": "CCI Period",
+                "type": "number",
                 "default": 0,
                 "min": 0,
                 "max": 100,
+                "step": 1,
                 "description": "CCI indikator davri (0 = o'chirilgan)",
                 "group": "Entry Settings"
             },
             "cciMax": {
-                "name": "CCI Max Level",
-                "type": "float",
+                "label": "CCI Max Level",
+                "type": "number",
                 "default": 100,
                 "min": 50,
                 "max": 200,
+                "step": 10,
                 "description": "CCI yuqori signal darajasi",
                 "group": "Entry Settings"
             },
             "cciMin": {
-                "name": "CCI Min Level",
-                "type": "float",
+                "label": "CCI Min Level",
+                "type": "number",
                 "default": -100,
                 "min": -200,
                 "max": -50,
+                "step": 10,
                 "description": "CCI past signal darajasi",
                 "group": "Entry Settings"
             },
             "timeframe": {
-                "name": "Timeframe",
+                "label": "Timeframe",
                 "type": "select",
                 "default": "1H",
-                "options": ["1m", "5m", "15m", "30m", "1H", "4H", "1D"],
+                "options": [
+                    {"value": "1m", "label": "1 Minute"},
+                    {"value": "5m", "label": "5 Minutes"},
+                    {"value": "15m", "label": "15 Minutes"},
+                    {"value": "30m", "label": "30 Minutes"},
+                    {"value": "1H", "label": "1 Hour"},
+                    {"value": "4H", "label": "4 Hours"},
+                    {"value": "1D", "label": "1 Day"}
+                ],
                 "description": "Signal timeframe",
                 "group": "Entry Settings"
             },
             "reverseOrder": {
-                "name": "Reverse Signals",
-                "type": "bool",
+                "label": "Reverse Signals",
+                "type": "boolean",
                 "default": False,
                 "description": "Signal yo'nalishini teskari qilish",
                 "group": "Entry Settings"
             },
             # Profit Settings
             "singleOrderProfit": {
-                "name": "Single Order Profit",
-                "type": "float",
+                "label": "Single Order Profit",
+                "type": "number",
                 "default": 3.0,
                 "min": 0.1,
                 "max": 1000,
+                "step": 0.5,
                 "description": "Bitta order uchun profit target (USDT)",
                 "group": "Profit Settings"
             },
             "pairGlobalProfit": {
-                "name": "Pair Global Profit",
-                "type": "float",
+                "label": "Pair Global Profit",
+                "type": "number",
                 "default": 1.0,
                 "min": 0,
                 "max": 1000,
+                "step": 0.5,
                 "description": "Buy+Sell juftlik profit target (USDT)",
                 "group": "Profit Settings"
             },
             "globalProfit": {
-                "name": "Daily Profit Target",
-                "type": "float",
+                "label": "Daily Profit Target",
+                "type": "number",
                 "default": 0,
                 "min": 0,
                 "max": 10000,
+                "step": 10,
                 "description": "Kunlik profit target (0 = cheksiz)",
                 "group": "Profit Settings"
             },
             "maxLoss": {
-                "name": "Max Loss",
-                "type": "float",
+                "label": "Max Loss",
+                "type": "number",
                 "default": 0,
                 "min": -10000,
                 "max": 0,
+                "step": 10,
                 "description": "Maksimal zarar chegarasi (0 = cheksiz)",
                 "group": "Profit Settings"
             },
             # Position Sizing
             "baseLot": {
-                "name": "Base Lot Size",
-                "type": "float",
+                "label": "Base Lot Size",
+                "type": "number",
                 "default": 0.01,
                 "min": 0.001,
                 "max": 10.0,
+                "step": 0.001,
                 "description": "Boshlang'ich lot hajmi",
                 "group": "Position Sizing"
             },
             "leverage": {
-                "name": "Leverage",
-                "type": "int",
+                "label": "Leverage",
+                "type": "number",
                 "default": 10,
                 "min": 1,
                 "max": 125,
+                "step": 1,
                 "description": "Trading leverage",
                 "group": "Position Sizing"
             },
             "tradesPerDay": {
-                "name": "Trades Per Day",
-                "type": "int",
+                "label": "Trades Per Day",
+                "type": "number",
                 "default": 99,
                 "min": 1,
                 "max": 999,
+                "step": 1,
                 "description": "Kunlik maksimal savdolar soni",
                 "group": "Risk Management"
             }
