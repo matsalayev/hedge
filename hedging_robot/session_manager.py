@@ -233,64 +233,78 @@ class HedgingRobotWithWebhook(HedgingRobot):
             )
 
     async def _close_buy_positions(self, reason: str = "PROFIT_TARGET"):
-        """Close buy positions with webhook"""
+        """Close buy positions with webhook - sends INDIVIDUAL webhook for each position"""
         if not self.strategy.buy_positions:
             return
 
-        avg_price = self.strategy.get_average_buy_price()
-        count = len(self.strategy.buy_positions)
-        # Calculate total lot BEFORE closing (positions will be cleared)
-        total_lot = sum(p.lot for p in self.strategy.buy_positions)
+        # Save position info BEFORE closing (positions will be cleared)
+        positions_to_close = [
+            {
+                "id": p.id,
+                "entry_price": p.entry_price,
+                "lot": p.lot,
+            }
+            for p in self.strategy.buy_positions
+        ]
         positions_before = len(self.strategy.buy_positions)
 
         await super()._close_buy_positions()
 
-        # Only send webhook if positions were actually closed (not cleared due to error)
+        # Only send webhooks if positions were actually closed (not cleared due to error)
         positions_after = len(self.strategy.buy_positions)
         if positions_after < positions_before and self.webhook_client:
-            # USDT-M Perpetual: PnL = price_diff * quantity (leverage affects margin, not PnL!)
-            pnl = (self.current_price - avg_price) * total_lot
-            await self.webhook_client.send_positions_closed(
-                user_bot_id=self.user_bot_id,
-                symbol=self.config.trading.SYMBOL,
-                side="BUY",
-                positions_count=count,
-                total_quantity=total_lot,
-                total_pnl=pnl,
-                avg_entry_price=avg_price,
-                exit_price=self.current_price,
-                reason=reason
-            )
+            exit_price = self.current_price
+            # Send INDIVIDUAL webhook for each position with correct PnL
+            for pos in positions_to_close:
+                # USDT-M Perpetual: PnL = (exit - entry) * quantity
+                individual_pnl = (exit_price - pos["entry_price"]) * pos["lot"]
+                await self.webhook_client.send_trade_closed(
+                    user_bot_id=self.user_bot_id,
+                    symbol=self.config.trading.SYMBOL,
+                    side="BUY",
+                    entry_price=pos["entry_price"],
+                    exit_price=exit_price,
+                    quantity=pos["lot"],
+                    pnl=individual_pnl,
+                    reason=reason
+                )
 
     async def _close_sell_positions(self, reason: str = "PROFIT_TARGET"):
-        """Close sell positions with webhook"""
+        """Close sell positions with webhook - sends INDIVIDUAL webhook for each position"""
         if not self.strategy.sell_positions:
             return
 
-        avg_price = self.strategy.get_average_sell_price()
-        count = len(self.strategy.sell_positions)
-        # Calculate total lot BEFORE closing (positions will be cleared)
-        total_lot = sum(p.lot for p in self.strategy.sell_positions)
+        # Save position info BEFORE closing (positions will be cleared)
+        positions_to_close = [
+            {
+                "id": p.id,
+                "entry_price": p.entry_price,
+                "lot": p.lot,
+            }
+            for p in self.strategy.sell_positions
+        ]
         positions_before = len(self.strategy.sell_positions)
 
         await super()._close_sell_positions()
 
-        # Only send webhook if positions were actually closed (not cleared due to error)
+        # Only send webhooks if positions were actually closed (not cleared due to error)
         positions_after = len(self.strategy.sell_positions)
         if positions_after < positions_before and self.webhook_client:
-            # USDT-M Perpetual: PnL = price_diff * quantity (leverage affects margin, not PnL!)
-            pnl = (avg_price - self.current_price) * total_lot
-            await self.webhook_client.send_positions_closed(
-                user_bot_id=self.user_bot_id,
-                symbol=self.config.trading.SYMBOL,
-                side="SELL",
-                positions_count=count,
-                total_quantity=total_lot,
-                total_pnl=pnl,
-                avg_entry_price=avg_price,
-                exit_price=self.current_price,
-                reason=reason
-            )
+            exit_price = self.current_price
+            # Send INDIVIDUAL webhook for each position with correct PnL
+            for pos in positions_to_close:
+                # USDT-M Perpetual: PnL = (entry - exit) * quantity for SELL
+                individual_pnl = (pos["entry_price"] - exit_price) * pos["lot"]
+                await self.webhook_client.send_trade_closed(
+                    user_bot_id=self.user_bot_id,
+                    symbol=self.config.trading.SYMBOL,
+                    side="SELL",
+                    entry_price=pos["entry_price"],
+                    exit_price=exit_price,
+                    quantity=pos["lot"],
+                    pnl=individual_pnl,
+                    reason=reason
+                )
 
     async def close_all_positions_manually(self, reason: str = "MANUAL_CLOSE"):
         """Manually close all positions - called from API endpoint"""
