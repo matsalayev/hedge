@@ -148,6 +148,54 @@ app.add_middleware(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+#                               EXCEPTION HANDLERS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+from fastapi.responses import JSONResponse
+
+
+# Error code mapping for HEMA compatibility
+ERROR_CODE_MAP = {
+    404: "USER_NOT_FOUND",
+    400: "BAD_REQUEST",
+    401: "UNAUTHORIZED",
+    403: "FORBIDDEN",
+    409: "CONFLICT",
+    500: "INTERNAL_ERROR",
+}
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    """
+    Custom exception handler that returns errors in HEMA-compatible format.
+
+    HEMA expects: {"error": {"code": "...", "message": "..."}}
+    FastAPI default: {"detail": "..."}
+    """
+    error_code = ERROR_CODE_MAP.get(exc.status_code, "ERROR")
+
+    # Check if detail contains specific error hints
+    detail_str = str(exc.detail).lower()
+    if "not found" in detail_str or "not registered" in detail_str:
+        error_code = "USER_NOT_FOUND"
+    elif "not running" in detail_str or "already stopped" in detail_str:
+        error_code = "NOT_RUNNING"
+    elif "already running" in detail_str:
+        error_code = "ALREADY_RUNNING"
+
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": {
+                "code": error_code,
+                "message": str(exc.detail)
+            }
+        }
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 #                               AUTHENTICATION
 # ═══════════════════════════════════════════════════════════════════════════════
 
