@@ -6,6 +6,7 @@ Ko'p foydalanuvchi sessiyalarini boshqarish
 
 import asyncio
 import logging
+import os
 from typing import Dict, Optional, Any
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -463,7 +464,18 @@ class SessionManager:
             session.min_lot = custom.get("minLot", 0.001)
             session.max_lot = custom.get("maxLot", 50.0)
 
-            # Webhook
+            # Webhook - rewrite URL for Docker internal networking
+            # This fixes hairpin NAT issues where containers can't reach external URLs
+            internal_webhook_host = os.getenv("INTERNAL_WEBHOOK_HOST", "")
+            if internal_webhook_host and webhook_url:
+                # Replace https://hema.azro.uz with http://internal-ip:3000
+                import re
+                webhook_url = re.sub(
+                    r'https?://[^/]+',
+                    internal_webhook_host.rstrip('/'),
+                    webhook_url
+                )
+                logger.info(f"Webhook URL rewritten to: {webhook_url}")
             session.webhook_url = webhook_url
             session.webhook_secret = webhook_secret
 
