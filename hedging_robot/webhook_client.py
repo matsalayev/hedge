@@ -189,6 +189,7 @@ class WebhookClient:
                     "type": "MARKET",
                     "amount": quantity,
                     "price": exit_price,
+                    "entryPrice": entry_price,  # For matching with open trade
                     "cost": exit_price * quantity,
                     "fee": 0,
                     "feeCurrency": "USDT",
