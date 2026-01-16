@@ -807,33 +807,30 @@ class HedgingStrategy:
             exchange_buy_count = len(new_buy_positions)
             exchange_sell_count = len(new_sell_positions)
 
-            # Agar farq bo'lsa - sync qilish
-            if local_buy_count != exchange_buy_count or local_sell_count != exchange_sell_count:
-                logger.warning(
-                    f"Position sync: Local (buy={local_buy_count}, sell={local_sell_count}) != "
-                    f"Exchange (buy={exchange_buy_count}, sell={exchange_sell_count})"
-                )
+            # P1 FIX: Exchange aggregated position data qaytaradi (1 position per side).
+            # Local state esa individual grid levels ni saqlaydi (multiple positions).
+            # HECH QACHON local state ni exchange bilan REPLACE qilmaymiz!
+            #
+            # Sabab: Agar local da 3 ta BUY position bo'lsa (0.01 + 0.015 + 0.02),
+            # exchange 1 ta aggregated position qaytaradi (total=0.045, avgPrice).
+            # Replace qilsak, PnL hisoblash noto'g'ri bo'ladi (0.045 lot bilan).
 
-                # N5 fix - Atomic update (ikkala list ni bitta operatsiyada yangilash)
-                # Avval eski holatni saqlash (rollback uchun)
-                old_buy = self.buy_positions
-                old_sell = self.sell_positions
-
-                try:
-                    # Exchange state ni qabul qilish (atomik)
+            # Faqat LOCAL EMPTY bo'lganda exchange dan yuklash (bot restart)
+            if local_buy_count == 0 and local_sell_count == 0:
+                if exchange_buy_count > 0 or exchange_sell_count > 0:
+                    logger.info(
+                        f"Position sync: Loading from exchange (local empty) - "
+                        f"buy={exchange_buy_count}, sell={exchange_sell_count}"
+                    )
                     self.buy_positions = new_buy_positions
                     self.sell_positions = new_sell_positions
-
-                    logger.info(
-                        f"Position sync complete: {len(self.buy_positions)} buys, "
-                        f"{len(self.sell_positions)} sells"
-                    )
-                except Exception as e:
-                    # Rollback - eski holatni qaytarish
-                    self.buy_positions = old_buy
-                    self.sell_positions = old_sell
-                    logger.error(f"Position sync rollback: {e}")
-                    return False
+            else:
+                # Local positions mavjud - replace qilmaymiz, faqat log
+                # Exchange aggregated data bo'lgani uchun count farqi normal
+                logger.info(
+                    f"Position sync: Local (buy={local_buy_count}, sell={local_sell_count}), "
+                    f"Exchange (buy={exchange_buy_count}, sell={exchange_sell_count}) - keeping local state"
+                )
 
             return True
 

@@ -233,7 +233,13 @@ class HedgingRobotWithWebhook(HedgingRobot):
             )
 
     async def _close_buy_positions(self, reason: str = "PROFIT_TARGET"):
-        """Close buy positions with webhook - sends INDIVIDUAL webhook for each position"""
+        """
+        Close buy positions with webhook - sends INDIVIDUAL webhook for each position.
+
+        FIX: Webhook faqat exchange MUVAFFAQIYATLI yopganda yuboriladi.
+        Agar exchange "22002 No position" qaytarsa, webhook yuborilmaydi
+        chunki biz actual close price ni bilmaymiz.
+        """
         if not self.strategy.buy_positions:
             return
 
@@ -248,11 +254,43 @@ class HedgingRobotWithWebhook(HedgingRobot):
         ]
         positions_before = len(self.strategy.buy_positions)
 
-        await super()._close_buy_positions()
+        # Track if exchange close was successful
+        exchange_close_success = False
+        try:
+            total_lots = self.strategy.get_total_buy_lots()
+            await self.client.close_long(
+                symbol=self.config.trading.SYMBOL,
+                size=total_lots
+            )
+            exchange_close_success = True
 
-        # Only send webhooks if positions were actually closed (not cleared due to error)
+            # Exchange muvaffaqiyatli yopdi - stats yangilash
+            pnl, count = self.strategy.close_buy_positions(
+                self.current_price,
+                self.config.trading.LEVERAGE
+            )
+            logger.info(f"Closed {count} BUY positions. PnL: ${pnl:.2f}")
+
+        except Exception as e:
+            error_str = str(e)
+            logger.error(f"Failed to close BUY positions: {e}")
+
+            # 22002 = Exchange allaqachon yopgan (TP/SL orqali)
+            if "22002" in error_str or "No position" in error_str.lower():
+                logger.warning(
+                    "Exchange reports no BUY position - clearing local state. "
+                    "NOT sending webhook (unknown close price)"
+                )
+                self.strategy.buy_positions.clear()
+                self.strategy.fire_buy = False
+                # exchange_close_success = False - webhook yuborilmaydi!
+            else:
+                # Boshqa xato - pozitsiyalarni saqlab qolish
+                logger.warning("API error - keeping local positions for next sync")
+
+        # Webhook faqat exchange MUVAFFAQIYATLI yopganda yuboriladi
         positions_after = len(self.strategy.buy_positions)
-        if positions_after < positions_before and self.webhook_client:
+        if exchange_close_success and positions_after < positions_before and self.webhook_client:
             exit_price = self.current_price
             # Send INDIVIDUAL webhook for each position with correct PnL
             for pos in positions_to_close:
@@ -270,7 +308,13 @@ class HedgingRobotWithWebhook(HedgingRobot):
                 )
 
     async def _close_sell_positions(self, reason: str = "PROFIT_TARGET"):
-        """Close sell positions with webhook - sends INDIVIDUAL webhook for each position"""
+        """
+        Close sell positions with webhook - sends INDIVIDUAL webhook for each position.
+
+        FIX: Webhook faqat exchange MUVAFFAQIYATLI yopganda yuboriladi.
+        Agar exchange "22002 No position" qaytarsa, webhook yuborilmaydi
+        chunki biz actual close price ni bilmaymiz.
+        """
         if not self.strategy.sell_positions:
             return
 
@@ -285,11 +329,43 @@ class HedgingRobotWithWebhook(HedgingRobot):
         ]
         positions_before = len(self.strategy.sell_positions)
 
-        await super()._close_sell_positions()
+        # Track if exchange close was successful
+        exchange_close_success = False
+        try:
+            total_lots = self.strategy.get_total_sell_lots()
+            await self.client.close_short(
+                symbol=self.config.trading.SYMBOL,
+                size=total_lots
+            )
+            exchange_close_success = True
 
-        # Only send webhooks if positions were actually closed (not cleared due to error)
+            # Exchange muvaffaqiyatli yopdi - stats yangilash
+            pnl, count = self.strategy.close_sell_positions(
+                self.current_price,
+                self.config.trading.LEVERAGE
+            )
+            logger.info(f"Closed {count} SELL positions. PnL: ${pnl:.2f}")
+
+        except Exception as e:
+            error_str = str(e)
+            logger.error(f"Failed to close SELL positions: {e}")
+
+            # 22002 = Exchange allaqachon yopgan (TP/SL orqali)
+            if "22002" in error_str or "No position" in error_str.lower():
+                logger.warning(
+                    "Exchange reports no SELL position - clearing local state. "
+                    "NOT sending webhook (unknown close price)"
+                )
+                self.strategy.sell_positions.clear()
+                self.strategy.fire_sell = False
+                # exchange_close_success = False - webhook yuborilmaydi!
+            else:
+                # Boshqa xato - pozitsiyalarni saqlab qolish
+                logger.warning("API error - keeping local positions for next sync")
+
+        # Webhook faqat exchange MUVAFFAQIYATLI yopganda yuboriladi
         positions_after = len(self.strategy.sell_positions)
-        if positions_after < positions_before and self.webhook_client:
+        if exchange_close_success and positions_after < positions_before and self.webhook_client:
             exit_price = self.current_price
             # Send INDIVIDUAL webhook for each position with correct PnL
             for pos in positions_to_close:
@@ -307,8 +383,42 @@ class HedgingRobotWithWebhook(HedgingRobot):
                 )
 
     async def close_all_positions_manually(self, reason: str = "MANUAL_CLOSE"):
-        """Manually close all positions - called from API endpoint"""
+        """
+        Manually close all positions - called from API endpoint.
+
+        P2 FIX: If local positions are empty, fetch from exchange before closing.
+        """
         logger.info(f"[MANUAL_CLOSE] Closing all positions for {self.user_bot_id}")
+
+        # P2 FIX: If local positions are empty, try to fetch from exchange first
+        if self.strategy and self.client:
+            local_buy_count = len(self.strategy.buy_positions)
+            local_sell_count = len(self.strategy.sell_positions)
+
+            if local_buy_count == 0 and local_sell_count == 0:
+                logger.info("[MANUAL_CLOSE] Local positions empty, fetching from exchange...")
+                try:
+                    exchange_positions = await self.client.get_positions(self.config.trading.SYMBOL)
+                    for pos in exchange_positions:
+                        if pos.size > 0:
+                            from .strategy import HedgingPosition
+                            import time
+                            position = HedgingPosition(
+                                id=f"close_{pos.side}_{int(time.time())}",
+                                side='buy' if pos.side == 'long' else 'sell',
+                                entry_price=pos.entry_price,
+                                lot=pos.size,
+                                grid_level=0
+                            )
+                            if pos.side == 'long':
+                                self.strategy.buy_positions.append(position)
+                            else:
+                                self.strategy.sell_positions.append(position)
+                    logger.info(f"[MANUAL_CLOSE] Loaded {len(self.strategy.buy_positions)} BUY, "
+                               f"{len(self.strategy.sell_positions)} SELL from exchange")
+                except Exception as e:
+                    logger.error(f"[MANUAL_CLOSE] Failed to fetch positions from exchange: {e}")
+
         await self._close_buy_positions(reason=reason)
         await self._close_sell_positions(reason=reason)
         logger.info(f"[MANUAL_CLOSE] All positions closed for {self.user_bot_id}")
