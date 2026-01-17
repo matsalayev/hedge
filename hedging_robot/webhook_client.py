@@ -22,6 +22,27 @@ logger = logging.getLogger(__name__)
 # M10 fix - Webhook queue limit
 MAX_QUEUE_SIZE = 1000
 
+# Bitget fee rates (USDT-M Perpetual)
+# Maker: 0.02%, Taker: 0.06%
+# Market orders are always taker
+BITGET_TAKER_FEE_RATE = 0.0006  # 0.06%
+BITGET_MAKER_FEE_RATE = 0.0002  # 0.02%
+
+
+def calculate_trade_fee(cost: float, is_market: bool = True) -> float:
+    """
+    Calculate trading fee for Bitget
+
+    Args:
+        cost: Trade cost in USDT (price * quantity)
+        is_market: True for market orders (taker), False for limit (maker)
+
+    Returns:
+        Fee amount in USDT
+    """
+    rate = BITGET_TAKER_FEE_RATE if is_market else BITGET_MAKER_FEE_RATE
+    return round(cost * rate, 8)
+
 
 @dataclass
 class WebhookConfig:
@@ -140,6 +161,9 @@ class WebhookClient:
         grid_level: int = 1
     ):
         """Grid order ochildi eventi"""
+        cost = price * quantity
+        fee = calculate_trade_fee(cost, is_market=True)
+
         await self._send_event(
             "trade_opened",
             user_bot_id,
@@ -152,8 +176,8 @@ class WebhookClient:
                     "type": "MARKET",
                     "amount": quantity,
                     "price": price,
-                    "cost": price * quantity,
-                    "fee": 0,
+                    "cost": cost,
+                    "fee": fee,
                     "feeCurrency": "USDT",
                     "gridLevel": grid_level,
                     "openedAt": datetime.utcnow().isoformat() + "Z"
@@ -178,6 +202,9 @@ class WebhookClient:
         if side.upper() == "SELL":
             pnl_percent = -pnl_percent
 
+        cost = exit_price * quantity
+        fee = calculate_trade_fee(cost, is_market=True)
+
         await self._send_event(
             "trade_closed",
             user_bot_id,
@@ -190,8 +217,8 @@ class WebhookClient:
                     "amount": quantity,
                     "price": exit_price,
                     "entryPrice": entry_price,  # For matching with open trade
-                    "cost": exit_price * quantity,
-                    "fee": 0,
+                    "cost": cost,
+                    "fee": fee,
                     "feeCurrency": "USDT",
                     "pnl": pnl,
                     "pnlPercent": pnl_percent,
@@ -221,6 +248,9 @@ class WebhookClient:
             if side.upper() == "SELL":
                 pnl_percent = -pnl_percent
 
+        cost = exit_price * total_quantity
+        fee = calculate_trade_fee(cost, is_market=True)
+
         await self._send_event(
             "trade_closed",
             user_bot_id,
@@ -233,8 +263,8 @@ class WebhookClient:
                     "amount": total_quantity,  # Use actual quantity, not count
                     "price": exit_price,
                     "entryPrice": avg_entry_price,
-                    "cost": exit_price * total_quantity,
-                    "fee": 0,
+                    "cost": cost,
+                    "fee": fee,
                     "feeCurrency": "USDT",
                     "pnl": total_pnl,
                     "pnlPercent": round(pnl_percent, 4),
