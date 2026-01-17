@@ -818,17 +818,23 @@ async def verify_admin(x_admin_key: str = Header(None, alias="X-Admin-Key")):
     Header: X-Admin-Key: <admin_api_key>
     """
     if not ADMIN_API_KEY:
-        # Admin key konfiguratsiya qilinmagan - barcha admin requestlar rad etiladi
+        # Admin key konfiguratsiya qilinmagan - server tayyor emas
         raise HTTPException(
-            status_code=401,
-            detail="Admin API not configured. Set ADMIN_API_KEY environment variable."
+            status_code=503,
+            detail="Admin API sozlanmagan. ADMIN_API_KEY environment variable o'rnating."
         )
 
     if not x_admin_key:
-        raise HTTPException(status_code=401, detail="Missing X-Admin-Key header")
+        raise HTTPException(
+            status_code=401,
+            detail="X-Admin-Key header talab qilinadi"
+        )
 
     if not hmac.compare_digest(x_admin_key, ADMIN_API_KEY):
-        raise HTTPException(status_code=401, detail="Invalid admin key")
+        raise HTTPException(
+            status_code=401,
+            detail="Noto'g'ri admin key"
+        )
 
     return True
 
@@ -881,16 +887,36 @@ async def emergency_close_positions(
     session = manager.get_session(user_id)
 
     if not session:
-        raise HTTPException(status_code=404, detail=f"User {user_id} not found")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Foydalanuvchi topilmadi: {user_id}"
+        )
 
-    if not session.robot or session.status != SessionStatus.RUNNING:
-        raise HTTPException(status_code=400, detail="Robot not running")
+    if not session.robot:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Robot yaratilmagan. Status: {session.status.value}"
+        )
+
+    if session.status != SessionStatus.RUNNING:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Robot ishlamayapti. Joriy status: {session.status.value}"
+        )
 
     try:
         await session.robot._close_all_positions()
-        return {"message": "All positions closed"}
+        return {
+            "success": True,
+            "message": "Barcha pozitsiyalar yopildi",
+            "userId": user_id
+        }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Emergency close failed for {user_id}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Pozitsiyalarni yopishda xato: {str(e)}"
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

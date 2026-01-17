@@ -208,11 +208,33 @@ class BitgetClient:
                         await asyncio.sleep(wait_time)
                         continue
 
+                    # Cloudflare 5xx xatolar - retry qilish kerak
+                    if response.status >= 500:
+                        is_cloudflare = "cloudflare" in text.lower() or "<!DOCTYPE" in text
+                        if is_cloudflare:
+                            wait_time = 2 ** attempt  # Exponential backoff
+                            logger.warning(f"Cloudflare {response.status} xatosi (attempt {attempt + 1}), {wait_time}s kutilmoqda...")
+                            if attempt < self.config.MAX_RETRIES - 1:
+                                await asyncio.sleep(wait_time)
+                                # Headers yangilash (timestamp eskiradi)
+                                headers = self._get_headers(method, request_path, body_str)
+                                continue
+                            else:
+                                raise BitgetAPIError("CLOUDFLARE_ERROR", f"Cloudflare xatosi: {response.status}")
+
                     # Parse response
                     try:
                         data = json.loads(text)
                     except json.JSONDecodeError:
-                        raise BitgetAPIError("PARSE_ERROR", f"JSON parse error: {text}")
+                        # HTML javob - bu odatda Cloudflare xatosi
+                        if "<!DOCTYPE" in text or "<html" in text.lower():
+                            wait_time = 2 ** attempt
+                            logger.warning(f"HTML javob olindi (Cloudflare?), attempt {attempt + 1}, {wait_time}s kutilmoqda...")
+                            if attempt < self.config.MAX_RETRIES - 1:
+                                await asyncio.sleep(wait_time)
+                                headers = self._get_headers(method, request_path, body_str)
+                                continue
+                        raise BitgetAPIError("PARSE_ERROR", f"JSON parse error: {text[:500]}")
 
                     # Error check
                     if data.get("code") != "00000":
@@ -533,21 +555,57 @@ class BitgetClient:
     async def modify_tpsl(self, symbol: str, side: str,
                           tp_price: Optional[float] = None,
                           sl_price: Optional[float] = None,
-                          product_type: str = "USDT-FUTURES") -> Dict:
+                          product_type: str = "USDT-FUTURES",
+                          margin_coin: str = "USDT") -> Dict:
         """
-        Pozitsiya TP/SL ni o'zgartirish
+        Pozitsiya TP/SL ni o'rnatish (Bitget API v2)
 
-        ESLATMA: Bu endpoint Bitget API v2 da mavjud emas (40404 xato).
-        TP/SL local monitoring orqali amalga oshiriladi.
-        To'g'ri endpoint: /api/v2/mix/order/place-pos-tpsl (boshqa parametrlar bilan)
+        Endpoint: POST /api/v2/mix/order/place-pos-tpsl
+        Docs: https://www.bitget.com/api-doc/contract/plan/Place-Pos-Tpsl-Order
 
         Args:
-            symbol: Trading pair
+            symbol: Trading pair (e.g., BTCUSDT)
             side: 'long' yoki 'short'
-            tp_price: Yangi Take Profit narx
-            sl_price: Yangi Stop Loss narx
+            tp_price: Take Profit trigger narx
+            sl_price: Stop Loss trigger narx
+            product_type: Product type (default: USDT-FUTURES)
+            margin_coin: Margin coin (default: USDT)
+
+        Returns:
+            API response with orderId, stopSurplusClientOid, stopLossClientOid
         """
-        # TODO: Bitget API v2 da to'g'ri endpoint /api/v2/mix/order/place-pos-tpsl
-        # Hozircha local TP/SL monitoring ishlatiladi, shuning uchun bu metod skip qilinadi
-        logger.debug(f"modify_tpsl: Local TP/SL monitoring ishlatiladi (exchange-level TP/SL vaqtincha o'chirilgan)")
-        return {"success": True, "note": "Local TP/SL monitoring used"}
+        if not tp_price and not sl_price:
+            logger.debug("modify_tpsl: TP va SL berilmadi, skip")
+            return {"success": True, "note": "No TP/SL provided"}
+
+        # Bitget API v2 uchun productType kichik harfda bo'lishi kerak
+        product_type_lower = product_type.lower().replace("_", "-")
+
+        body: Dict[str, Any] = {
+            "symbol": symbol,
+            "productType": product_type_lower,
+            "marginCoin": margin_coin,
+            "holdSide": side
+        }
+
+        # Take Profit
+        if tp_price and tp_price > 0:
+            body["stopSurplusTriggerPrice"] = str(tp_price)
+            body["stopSurplusTriggerType"] = "mark_price"
+            # Execute price = trigger price (market order)
+            body["stopSurplusExecutePrice"] = str(tp_price)
+
+        # Stop Loss
+        if sl_price and sl_price > 0:
+            body["stopLossTriggerPrice"] = str(sl_price)
+            body["stopLossTriggerType"] = "mark_price"
+            body["stopLossExecutePrice"] = str(sl_price)
+
+        try:
+            result = await self.post("/api/v2/mix/order/place-pos-tpsl", body)
+            logger.info(f"TP/SL o'rnatildi: {side}, TP={tp_price}, SL={sl_price}")
+            return result
+        except BitgetAPIError as e:
+            # Agar pozitsiya topilmasa yoki boshqa xato bo'lsa, local TP/SL ishlatiladi
+            logger.warning(f"Exchange TP/SL xatosi ({e}), local monitoring ishlatiladi")
+            return {"success": False, "error": str(e), "note": "Local TP/SL monitoring used"}
