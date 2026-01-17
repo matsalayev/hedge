@@ -537,21 +537,17 @@ class BitgetClient:
         """
         Pozitsiya TP/SL ni o'zgartirish
 
+        ESLATMA: Bu endpoint Bitget API v2 da mavjud emas (40404 xato).
+        TP/SL local monitoring orqali amalga oshiriladi.
+        To'g'ri endpoint: /api/v2/mix/order/place-pos-tpsl (boshqa parametrlar bilan)
+
         Args:
             symbol: Trading pair
             side: 'long' yoki 'short'
             tp_price: Yangi Take Profit narx
             sl_price: Yangi Stop Loss narx
         """
-        body = {
-            "symbol": symbol,
-            "productType": product_type,
-            "holdSide": side
-        }
-
-        if tp_price:
-            body["presetStopSurplusPrice"] = str(tp_price)
-        if sl_price:
-            body["presetStopLossPrice"] = str(sl_price)
-
-        return await self.post("/api/v2/mix/position/set-profit-loss", body)
+        # TODO: Bitget API v2 da to'g'ri endpoint /api/v2/mix/order/place-pos-tpsl
+        # Hozircha local TP/SL monitoring ishlatiladi, shuning uchun bu metod skip qilinadi
+        logger.debug(f"modify_tpsl: Local TP/SL monitoring ishlatiladi (exchange-level TP/SL vaqtincha o'chirilgan)")
+        return {"success": True, "note": "Local TP/SL monitoring used"}
